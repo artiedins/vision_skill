@@ -1,6 +1,6 @@
 # Vision skill
 
-A stand-alone skill for image understanding through ten allowed OpenRouter models. It includes
+A stand-alone skill for image understanding through eleven allowed OpenRouter models. It includes
 agent instructions, a Python CLI, local crop/resize helpers, saved responses and cost records.
 It supports varied vision tasks rather than one application. It does not generate images or send
 native video; sample video frames first.

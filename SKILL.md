@@ -1,6 +1,6 @@
 ---
 name: vision
-description: Use OpenRouter vision models to identify or locate objects, discuss colour and design, read text and plots, compare images, assess image quality, or inspect sampled video frames. Includes local image preparation, a fixed ten-model allow-list, saved answers and per-call cost records.
+description: Use OpenRouter vision models to identify or locate objects, discuss colour and design, read text and plots, compare images, assess image quality, or inspect sampled video frames. Includes local image preparation, a fixed eleven-model allow-list, saved answers and per-call cost records.
 compatibility: Requires Python 3.10+, Pillow, network access to openrouter.ai and an inference API key. Optional rawpy for camera raw, pillow-heif for HEIC, and ffmpeg for video frame extraction.
 metadata:
   cost: paid inference with local per-call cost records
@@ -188,7 +188,7 @@ supplied.
 
 ## Model choice
 
-Only these ten slugs are allowed. Short names without the vendor prefix also resolve to this list.
+Only these eleven slugs are allowed. Short names without the vendor prefix also resolve to this list.
 If a slug is unavailable, report it. Do not substitute a model outside the list.
 
 | OpenRouter slug | starting use |
@@ -200,6 +200,7 @@ If a slug is unavailable, report it. Do not substitute a model outside the list.
 | `google/gemini-3.8-flash` | charts, tables, affordable general first pass |
 | `anthropic/claude-opus-5.5` | reasoning and design discussion |
 | `openai/gpt-6-sol` | general vision and object localisation |
+| `openai/gpt-6.1-sol` | general vision and object localisation; upgrade over GPT-6 Sol, reasoning is mandatory |
 | `meta/muse-spark-1.2` | OCR, an additional design opinion |
 | `z-ai/glm-5.3-flash` | rough bulk descriptions and pre-filtering |
 | `openai/gpt-6-luna` | simple labels, with limited task-specific evidence |

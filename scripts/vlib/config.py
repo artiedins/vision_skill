@@ -23,6 +23,7 @@ ALLOWED = [
     Model("google/gemini-3.8-flash", "Gemini 3.8 Flash", "cheap", "Charts, tables and a general first pass."),
     Model("anthropic/claude-opus-5.5", "Claude Opus 5.5", "premium", "General reasoning and design discussion."),
     Model("openai/gpt-6-sol", "GPT-6 Sol", "mid", "General vision and object localisation."),
+    Model("openai/gpt-6.1-sol", "GPT-6.1 Sol", "mid", "General vision and object localisation; upgrade over GPT-6 Sol. Reasoning is mandatory (default effort medium)."),
     Model("meta/muse-spark-1.2", "Muse Spark 1.2", "cheap", "OCR and a second opinion on design."),
     Model("z-ai/glm-5.3-flash", "GLM 5.3 Flash", "cheap", "Rough bulk descriptions and pre-filtering."),
     Model("openai/gpt-6-luna", "GPT-6 Luna", "cheap", "Simple labels; limited task-specific evidence."),

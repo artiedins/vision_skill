@@ -3,7 +3,7 @@
 The fixed allow-list is in `skills/vision_skill/scripts/vlib/config.py`. Use
 `python3 skills/vision_skill/scripts/vision.py models --refresh` for current availability, image modality and catalog
 prices. A catalog listing is not a guarantee that an account can use a particular endpoint.
-Never invent a replacement slug or substitute a model outside the ten.
+Never invent a replacement slug or substitute a model outside the allow-list.
 
 ## Starting choices
 
@@ -25,6 +25,7 @@ not guarantees on new images. The underlying sources measure different things:
 | `google/gemini-3.8-flash` | plots, tables, affordable general first pass | extraction 97.3, detection 68.1 |
 | `anthropic/claude-opus-5.5` | general reasoning and design discussion | MMMU-Pro 87.7, Roboflow overall #3 |
 | `openai/gpt-6-sol` | general vision, less costly object localisation | detection 74.7 mAP@50 |
+| `openai/gpt-6.1-sol` | general vision, object localisation; upgrade over GPT-6 Sol | AA intelligence index 51.8; no task-specific vision benchmark yet |
 | `meta/muse-spark-1.2` | OCR, a lower-cost second reader | OCR 93.6 |
 | `z-ai/glm-5.3-flash` | rough bulk descriptions and pre-filtering | weaker task evidence than the premium group |
 | `openai/gpt-6-luna` | simple labels with explicit uncertainty | limited task-specific evidence |
@@ -63,7 +64,9 @@ change the answer; the measured price difference between low and high effort exc
 difference between models. `default` omits the effort field. Some endpoints, including previously
 tested GLM endpoints, require reasoning and reject `none`; the CLI reports that error instead of
 silently changing settings. Reasoning tokens count as output tokens, so a high effort with a
-small output allowance can consume the allowance before an answer is returned.
+small output allowance can consume the allowance before an answer is returned. Catalog 2026-10-03:
+`openai/gpt-6.1-sol` has mandatory reasoning (efforts max/xhigh/high/medium/low, default medium),
+takes text, image and file input, and lists $0.000002 prompt / $0.00001 completion per token.
 
 Several models advertise native video, but this CLI sends still images only. See the video-frame
 recipe for explicit sampling and timing limitations.

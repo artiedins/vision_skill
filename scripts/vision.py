@@ -29,6 +29,10 @@ def check_model(name):
     return slug
 
 
+def endpoint_of(slug):
+    return config.BY_SLUG[slug].endpoint
+
+
 def read_prompt(args):
     if args.prompt_file:
         return Path(args.prompt_file).read_text(encoding="utf-8")
@@ -48,7 +52,7 @@ def make_payload(request):
     prompt = request.prompt
     if request.json_mode and not request.schema:
         prompt += runs.JSON_INSTRUCTION
-    return client.build_payload(slug, prompt, request.image_paths, system=request.system, effort=request.effort, max_tokens=request.max_tokens, schema=request.schema)
+    return client.build_payload(slug, endpoint_of(slug), prompt, request.image_paths, system=request.system, effort=request.effort, max_tokens=request.max_tokens, schema=request.schema)
 
 
 def saved_result(record):
@@ -81,6 +85,7 @@ def do_call(cfg, request, quiet=False, resume=False):
         "tag": request.tag,
         "session": session["id"],
         "model": payload["model"],
+        "endpoint": payload["provider"]["only"][0],
         "effort": request.effort,
         "max_tokens": request.max_tokens,
         "prompt": payload["messages"][-1]["content"][0]["text"],
@@ -116,7 +121,8 @@ def do_call(cfg, request, quiet=False, resume=False):
         pending_path.unlink()
     total = ledger.totals(cfg)
     print(
-        f'vision: model={meta["model"]} cost={ledger.money(meta["cost"])} '
+        f'vision: model={meta["model"]} endpoint={meta["endpoint"]} provider={meta.get("provider")} '
+        f'cost={ledger.money(meta["cost"])} '
         f'session={ledger.money(total["cost_session"])} project={ledger.money(total["cost_total"])} '
         f'finish={meta["finish_reason"]} run={meta["run_md"]}',
         file=sys.stderr,
@@ -131,28 +137,106 @@ def do_call(cfg, request, quiet=False, resume=False):
     return {"meta": meta, "answer": answer, "parsed": parsed, "skipped": False}
 
 
+def per_million(pricing, field):
+    try:
+        return round(float(pricing[field]) * 1_000_000, 3)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def cmd_models(cfg, args):
     catalog = client.catalog(cfg, refresh=args.refresh)
+    endpoints = client.endpoints(cfg, refresh=args.refresh)
     rows = []
     for model in config.ALLOWED:
-        entry = catalog.get(model.slug)
+        entry = catalog.get(model.slug) or {}
+        listed = (endpoints.get(model.slug) or {}).get("endpoints") or []
+        pinned = next((e for e in listed if e.get("tag") == model.endpoint), None)
         rows.append(
             {
                 "slug": model.slug,
+                "label": model.label,
                 "tier": model.tier,
+                "endpoint": model.endpoint,
+                "endpoint_listed": pinned is not None,
+                "endpoint_status": (pinned or {}).get("status"),
+                "endpoint_count": len(listed),
+                "prompt_per_mtok": per_million((pinned or {}).get("pricing") or {}, "prompt"),
+                "completion_per_mtok": per_million((pinned or {}).get("pricing") or {}, "completion"),
+                "quantization": (pinned or {}).get("quantization"),
+                "image_input": "image" in entry.get("architecture", {}).get("input_modalities", []),
                 "note": model.note,
-                "available": entry is not None,
-                "image_input": "image" in (entry or {}).get("architecture", {}).get("input_modalities", []),
-                "pricing": (entry or {}).get("pricing"),
-                "context_length": (entry or {}).get("context_length"),
             }
         )
     if args.json:
         print(json.dumps(rows, indent=2))
-    else:
-        for row in rows:
-            price = row["pricing"] or {}
-            print(f'{row["slug"]:36s} in/token={price.get("prompt", "?")} ' f'out/token={price.get("completion", "?")} image_input={row["image_input"]}')
+        return
+    print(f'{"slug":35s} {"pinned endpoint":26s} {"st":>3s} {"in $/Mtok":>9s} {"out $/Mtok":>10s} img')
+    for row in rows:
+        flag = "" if row["endpoint_listed"] else "  <- PIN NOT LISTED"
+        print(
+            f'{row["slug"]:35s} {row["endpoint"]:26s} {str(row["endpoint_status"]):>3s} '
+            f'{str(row["prompt_per_mtok"]):>9s} {str(row["completion_per_mtok"]):>10s} '
+            f'{"yes" if row["image_input"] else "no"}{flag}'
+        )
+    missing = [row["slug"] for row in rows if not row["endpoint_listed"]]
+    if missing:
+        print("vision: WARNING pinned endpoint not in the live list for: " + ", ".join(missing), file=sys.stderr)
+    print("vision: status 0 is normal; a nonzero status is a provider-side health flag, not a routing failure. A pinned call can still fail on account data policy.", file=sys.stderr)
+
+
+PROBE_PROMPT = (
+    "Image 1 is a test card. Reply on one line with the large number, the colour of the square "
+    "on the left, and the shape on the right."
+)
+
+
+def cmd_probe(cfg, args):
+    names = [m.strip() for m in (args.models or ",".join(config.BY_SLUG)).split(",") if m.strip()]
+    models = [check_model(name) for name in names]
+    if len(models) != len(set(models)):
+        raise ValueError("probe needs a list of distinct allowed models")
+    card = images.probe_card(cfg.state_dir / "probe_card.jpg")
+    rows = []
+    for model in models:
+        request = Request(
+            model=model,
+            prompt=PROBE_PROMPT,
+            image_paths=[card],
+            effort=args.effort,
+            max_tokens=args.max_tokens,
+            tag="probe",
+        )
+        try:
+            result = do_call(cfg, request, quiet=True)
+            answer = result["answer"].strip()
+            rows.append(
+                {
+                    "model": model,
+                    "endpoint": endpoint_of(model),
+                    "provider": result["meta"].get("provider"),
+                    "routed": result["meta"].get("routing"),
+                    "cost": result["meta"]["cost"],
+                    "read_number": "42" in answer,
+                    "answer": answer,
+                    "run": result["meta"]["run_md"],
+                }
+            )
+        except (ValueError, client.ApiError) as exc:
+            # A rejected pin, an exhausted reasoning budget or an empty answer: report and continue.
+            rows.append({"model": model, "endpoint": endpoint_of(model), "error": str(exc)})
+            print(f"vision: probe {model} failed: {exc}", file=sys.stderr)
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return
+    for row in rows:
+        if "error" in row:
+            print(f'{row["model"]:35s} {row["endpoint"]:26s} FAILED  {row["error"][:120]}')
+        else:
+            print(
+                f'{row["model"]:35s} {row["endpoint"]:26s} ok  provider={row["provider"]} '
+                f'number_read={"yes" if row["read_number"] else "no"} cost={ledger.money(row["cost"])}'
+            )
 
 
 def cmd_info(cfg, args):
@@ -213,23 +297,36 @@ def cmd_panel(cfg, args):
     prompt = read_prompt(args)
     path = Path(args.out_dir or cfg.runs_dir()) / (runs.run_name(args.tag or "panel", "panel") + ".md")
     rows = []
+    failed = 0
     try:
         for model in models:
             request = request_from_args(args, model, prompt)
-            result = do_call(cfg, request, quiet=True)
-            rows.append(result_row(result, request.tag))
-            lines = [f"# Panel: {len(rows)} of {len(models)} completed", "", prompt]
+            try:
+                result = do_call(cfg, request, quiet=True)
+                rows.append(result_row(result, request.tag))
+            except (ValueError, client.ApiError) as exc:
+                # One model failing (allocation, pinned endpoint, truncated answer) must not cost
+                # the answers already paid for. Its transcript and ledger record are on disk.
+                failed += 1
+                rows.append({"tag": request.tag, "model": model, "error": str(exc)})
+                print(f"vision: panel {model} failed: {exc}", file=sys.stderr)
+            lines = [f"# Panel: {len(rows) - failed} of {len(models)} completed", "", prompt]
             for row in rows:
-                lines += ["", f'## {row["model"]}, {ledger.money(row["cost"])}', "", json.dumps(row["answer"], indent=2) if not isinstance(row["answer"], str) else row["answer"]]
+                if "error" in row:
+                    lines += ["", f'## {row["model"]}, FAILED', "", row["error"]]
+                else:
+                    lines += ["", f'## {row["model"]}, {ledger.money(row["cost"])}', "", json.dumps(row["answer"], indent=2) if not isinstance(row["answer"], str) else row["answer"]]
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     finally:
-        print(f"vision: panel {len(rows)}/{len(models)} completed; {path}", file=sys.stderr)
+        print(f"vision: panel {len(rows) - failed}/{len(models)} completed; {path}", file=sys.stderr)
         if args.json:
             print(json.dumps(rows, indent=2, ensure_ascii=False))
         elif not args.quiet:
             for row in rows:
-                print(f'\n{row["model"]}:\n{row["answer"]}')
+                print(f'\n{row["model"]}:\n{row.get("error") or row["answer"]}')
+    if failed:
+        raise ValueError(f"{failed} of {len(models)} panel calls failed; see {path}")
 
 
 def batch_requests(args):
@@ -275,24 +372,33 @@ def cmd_batch(cfg, args):
     requests = batch_requests(args)
     before = ledger.totals(cfg)
     rows = []
+    failed = 0
     try:
         for request in requests:
-            result = do_call(cfg, request, quiet=True, resume=not args.redo)
-            rows.append(result_row(result, request.tag))
+            try:
+                result = do_call(cfg, request, quiet=True, resume=not args.redo)
+                rows.append(result_row(result, request.tag))
+            except (ValueError, client.ApiError) as exc:
+                # An unusable or rejected answer is saved and charged; the rest of the batch runs.
+                failed += 1
+                rows.append({"tag": request.tag, "model": request.model, "error": str(exc)})
+                print(f"vision: batch item {request.tag} failed: {exc}", file=sys.stderr)
             if args.out:
                 ledger.write_json(Path(args.out), rows)
     finally:
         after = ledger.totals(cfg)
         count = after["calls_total"] - before["calls_total"]
         cost = after["cost_total"] - before["cost_total"]
-        print(f"vision: batch {len(rows)}/{len(requests)} completed, {count} newly recorded calls; " f"reported new cost {ledger.money(cost)}", file=sys.stderr)
+        print(f"vision: batch {len(rows) - failed}/{len(requests)} completed, {count} newly recorded calls; " f"reported new cost {ledger.money(cost)}", file=sys.stderr)
         if after["pending"] or after["unknown_costs"]:
             print("vision: WARNING batch cost is incomplete; unresolved request/cost remains", file=sys.stderr)
         if args.json:
             print(json.dumps(rows, indent=2, ensure_ascii=False))
         elif not args.quiet:
             for row in rows:
-                print(f'{row["tag"]}: {row["answer"]}')
+                print(f'{row["tag"]}: {row.get("error") or row["answer"]}')
+    if failed:
+        raise ValueError(f"{failed} of {len(requests)} batch items failed; results on disk may be partial")
 
 
 def cmd_start(cfg, args):
@@ -427,6 +533,12 @@ def build_parser():
     p.add_argument("--effort", default="high")
     p.add_argument("--max-tokens", type=int, default=4000)
     p.set_defaults(func=cmd_batch)
+    p = sub.add_parser("probe", help="paid reachability check: one tiny call per pinned endpoint")
+    p.add_argument("--models", help="comma-separated short names or slugs; default all allowed models")
+    p.add_argument("--effort", default="low", choices=["none", "minimal", "low", "medium", "high", "default"])
+    p.add_argument("--max-tokens", type=int, default=800)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_probe)
     p = sub.add_parser("start")
     p.add_argument("--note")
     p.set_defaults(func=cmd_start)
@@ -437,7 +549,7 @@ def main():
     args = build_parser().parse_args()
     try:
         cfg = config.load_config(env_file=args.env_file, state_dir=args.state_dir, timeout=args.timeout)
-        paid = args.command in ("ask", "panel", "batch")
+        paid = args.command in ("ask", "panel", "batch", "probe")
         if paid and not cfg.api_key:
             raise ValueError("No API key found. Populate .env from .env.example with OR_API_KEY.")
         if paid or args.command == "start":

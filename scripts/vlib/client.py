@@ -7,9 +7,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import images, ledger
+from . import config, images, ledger
 
 API = "https://openrouter.ai/api/v1"
+CACHE_SECONDS = 6 * 3600
 
 
 class ApiError(Exception):
@@ -18,7 +19,7 @@ class ApiError(Exception):
         self.status = status
 
 
-def request_json(url, key="", payload=None, timeout=60):
+def request_json(url, key="", payload=None, timeout=60, headers=None):
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data)
     if key:
@@ -26,6 +27,8 @@ def request_json(url, key="", payload=None, timeout=60):
     if data is not None:
         request.add_header("Content-Type", "application/json")
         request.add_header("X-Title", "vision-skill")
+    for name, value in (headers or {}).items():
+        request.add_header(name, value)
     # Never replay a paid POST automatically: a timeout or 5xx can follow a billed generation.
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -40,20 +43,46 @@ def request_json(url, key="", payload=None, timeout=60):
         raise ApiError(f"request failed: {message}") from None
 
 
-def catalog(cfg, refresh=False):
-    cache = cfg.state_dir / "catalog.json"
-    fresh = cache.is_file() and time.time() - cache.stat().st_mtime < 6 * 3600
-    if not refresh and fresh:
+def _cached(cfg, name, refresh, fetch):
+    cache = cfg.state_dir / name
+    if not refresh and cache.is_file() and time.time() - cache.stat().st_mtime < CACHE_SECONDS:
         try:
-            return {m["id"]: m for m in json.loads(cache.read_text(encoding="utf-8"))["data"]}
+            return json.loads(cache.read_text(encoding="utf-8"))
         except (ValueError, KeyError, TypeError):
             pass
-    data = request_json(f"{API}/models", timeout=90)["data"]
-    ledger.write_json(cache, {"fetched": time.time(), "data": data})
-    return {m["id"]: m for m in data}
+    data = fetch()
+    ledger.write_json(cache, data)
+    return data
 
 
-def build_payload(slug, prompt, image_paths, system=None, effort="high", max_tokens=4000, schema=None):
+def catalog(cfg, refresh=False):
+    def fetch():
+        return {m["id"]: m for m in request_json(f"{API}/models", timeout=90)["data"]}
+
+    return _cached(cfg, "catalog.json", refresh, fetch)
+
+
+def endpoints(cfg, refresh=False):
+    # Per-model endpoint lists. tags, health status and per-endpoint prices decide whether a
+    # pinned endpoint exists at all; account data policy can still reject it at call time.
+    def fetch():
+        fetched = {}
+        for model in config.ALLOWED:
+            body = request_json(f"{API}/models/{model.slug}/endpoints", cfg.api_key, timeout=60)
+            fetched[model.slug] = body.get("data") or {}
+        return fetched
+
+    return _cached(cfg, "endpoints.json", refresh, fetch)
+
+
+def provider_block(endpoint):
+    block = {"allow_fallbacks": False, "require_parameters": True}
+    if endpoint:
+        block["only"] = [endpoint]
+    return block
+
+
+def build_payload(slug, endpoint, prompt, image_paths, system=None, effort="high", max_tokens=4000, schema=None):
     content = [{"type": "text", "text": prompt}]
     for path in image_paths:
         mime, data = images.upload_bytes(path)
@@ -62,7 +91,7 @@ def build_payload(slug, prompt, image_paths, system=None, effort="high", max_tok
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": content})
-    payload = {"model": slug, "messages": messages, "max_tokens": max_tokens, "provider": {"require_parameters": True}}
+    payload = {"model": slug, "messages": messages, "max_tokens": max_tokens, "provider": provider_block(endpoint)}
     if effort != "default":
         payload["reasoning"] = {"effort": effort}
     if schema:
@@ -71,7 +100,8 @@ def build_payload(slug, prompt, image_paths, system=None, effort="high", max_tok
 
 
 def chat(cfg, payload):
-    return request_json(f"{API}/chat/completions", cfg.api_key, payload, cfg.timeout)
+    # X-OpenRouter-Metadata has the router name the provider it selected for this call.
+    return request_json(f"{API}/chat/completions", cfg.api_key, payload, cfg.timeout, headers={"X-OpenRouter-Metadata": "enabled"})
 
 
 def answer_of(body):
@@ -81,6 +111,18 @@ def answer_of(body):
     if isinstance(content, list):
         content = "\n".join(item.get("text", "") for item in content if item.get("type") == "text")
     return content, message
+
+
+def routing_of(body):
+    meta = body.get("openrouter_metadata") or {}
+    endpoints = meta.get("endpoints") or {}
+    return {
+        "provider": body.get("provider"),
+        "summary": meta.get("summary"),
+        "strategy": meta.get("strategy"),
+        "attempt": meta.get("attempt"),
+        "candidates": endpoints.get("total"),
+    }
 
 
 def usage_record(body, slug):
@@ -103,6 +145,7 @@ def usage_record(body, slug):
         "cost_source": "usage.cost" if cost is not None else "unknown",
         "finish_reason": (body.get("choices") or [{}])[0].get("finish_reason"),
         "provider": body.get("provider"),
+        "routing": routing_of(body),
         "generation_id": body.get("id"),
     }
 

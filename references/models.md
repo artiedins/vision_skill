@@ -1,72 +1,89 @@
 # Model selection and evidence
 
-The fixed allow-list is in `skills/vision_skill/scripts/vlib/config.py`. Use
-`python3 skills/vision_skill/scripts/vision.py models --refresh` for current availability, image modality and catalog
-prices. A catalog listing is not a guarantee that an account can use a particular endpoint.
-Never invent a replacement slug or substitute a model outside the allow-list.
+The allow-list and its pinned endpoints live in `scripts/vlib/config.py`. Each model has exactly
+one endpoint tag, and every request sets `provider.only` to that tag with `allow_fallbacks: false`,
+so a call either reaches that endpoint or fails. `models` prints the pin, whether it is still in
+OpenRouter's live endpoint list, that endpoint's health status and its per-million-token prices;
+`models --refresh` skips the six-hour cache.
 
-## Starting choices
+## How endpoint pinning behaves
 
-These recommendations draw on a 2026-09-27 research snapshot. They are task-selection heuristics,
-not guarantees on new images. The underlying sources measure different things:
+- A pin that does not exist produces HTTP 404 naming the providers that do serve the model, for
+  example `your request's provider.only preference permits only: nonexistent-provider`. That is the
+  intended loud failure, not a reason to widen the list.
+- A pin can also be rejected by **account data policy**, which the endpoint list does not show. On
+  this account every `google-ai-studio` endpoint is removed with `ZDR violation (account settings)`,
+  which is why the Gemini pins are all `google-vertex`. Only a paid call reveals this, so run
+  `probe` after changing account settings.
+- A tag without a region segment matches that provider's regional siblings: `amazon-bedrock`
+  includes `amazon-bedrock/us-east-1` and `amazon-bedrock/eu-west-1`. Use the region form when the
+  region matters.
+- `service_tier` endpoints (`flex`, `priority`) are separate targets and are usually priced
+  differently from their standard sibling. The pin decides the price: the same Gemini 3.8 Flash
+  frame cost $0.000567 on `google-vertex/global/flex` and $0.000938 unpinned.
+- Confirm the pin took effect by comparing reported `usage.cost` with the pinned endpoint's price:
+  on nine probe calls the two agreed to the last decimal on all nine once cache reads were counted
+  at the cache price.
 
-- [Roboflow Vision Evals](https://playground.roboflow.com/evals): detection, counting,
-  identification, OCR, extraction and visual reasoning.
-- [LMArena vision](https://arena.ai/leaderboard/vision): human pairwise preference. A nearby
-  model-family entry is not a measurement of every later version.
-- [Artificial Analysis](https://artificialanalysis.ai/): published MMMU-Pro multimodal reasoning.
+## The nine models, as of 2026-10-28
 
-| allowed slug | starting use | relevant result in the research snapshot |
-| --- | --- | --- |
-| `anthropic/claude-fable-5` | OCR, an alternative Fable reader | OCR 94.0, identification 100.0 |
-| `openai/gpt-6-astra` | difficult localisation and visual reasoning | detection 82.1 mAP@50, reasoning 87.2 |
-| `google/gemini-3.1-pro-preview` | stated-class identification, structured data | identification 100.0, extraction 95.9 |
-| `anthropic/claude-fable-5.1` | OCR and diagrams | OCR 94.0 |
-| `google/gemini-3.8-flash` | plots, tables, affordable general first pass | extraction 97.3, detection 68.1 |
-| `anthropic/claude-opus-5.5` | general reasoning and design discussion | MMMU-Pro 87.7, Roboflow overall #3 |
-| `openai/gpt-6-sol` | general vision, less costly object localisation | detection 74.7 mAP@50 |
-| `openai/gpt-6.1-sol` | general vision, object localisation; upgrade over GPT-6 Sol | AA intelligence index 51.8; no task-specific vision benchmark yet |
-| `meta/muse-spark-1.2` | OCR, a lower-cost second reader | OCR 93.6 |
-| `z-ai/glm-5.3-flash` | rough bulk descriptions and pre-filtering | weaker task evidence than the premium group |
-| `openai/gpt-6-luna` | simple labels with explicit uncertainty | limited task-specific evidence |
+Prices are the pinned endpoint's catalog price per million tokens, in and out.
 
-A 100.0 identification score applies to the benchmark, not every real-world class. Published
-design-generation rankings are not tests of colour perception or aesthetic judgement.
-Recommendations for design, image quality and hard cross-image correspondence have weaker
-evidence than OCR/extraction/localisation recommendations.
+| model | pinned endpoint | $/Mtok | starting use |
+| --- | --- | --- | --- |
+| `openai/gpt-6.1-terra` | `openai/flex` | 0.5 / 2.5 | default general work: cheapest model that gave exact coordinates |
+| `openai/gpt-6.1-sol` | `openai/flex` | 1 / 5 | inventory and localisation; reasoning is mandatory, so budget tokens |
+| `anthropic/claude-opus-5.5` | `amazon-bedrock` | 4 / 20 | geometry, shadow and camera reasoning, awkward judgement calls |
+| `google/gemini-4-argon` | `google-vertex/global` | 2 / 10 | strongest all-round reading; start here when the answer must be right |
+| `google/gemini-3.1-pro-preview` | `google-vertex/global/flex` | 1 / 6 | constrained comparison between named candidates |
+| `google/gemini-3.8-flash` | `google-vertex/global/flex` | 0.375 / 1.875 | bulk passes: plots, tables, first-pass inventory |
+| `x-ai/grok-4.7` | `xai/zdr` | 2 / 6 | second opinion, blunt critique; unrated beyond one test |
+| `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | 0.37 / 0.739 | captioning and description only; boxes were wrong in testing |
+| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | 0.103 / 0.6 | cheapest calls; spends heavily on reasoning before it answers |
 
-## Costs depend on the whole request
+## One measured test, and what it does and does not show
 
-The following are historical observations from an earlier implementation run, not current quotes
-or measurements repeated for each task. Most used one 1568x1176 image, low effort, a 600-token
-output allowance and a two-sentence prompt. Astra used a larger image and allowance, so it is not
-a controlled comparison with the others.
+One synthetic card (640x480: red square, blue ellipse, large "42"), identical prompt, effort
+`low`, 4000-token allowance, asked for the number and both boxes as fractions. Only one image per
+model was tested, so read this as output-format evidence, not a capability ranking.
 
-| model short name | reported cost per call, USD |
-| --- | --- |
-| claude-fable-5 | 0.0285 |
-| gpt-6-astra | 0.0713 (2048 px frame, 1500-token allowance) |
-| gemini-3.1-pro-preview | 0.0091 |
-| claude-fable-5.1 | 0.0294 |
-| gemini-3.8-flash | 0.0010 |
-| claude-opus-5.5 | 0.0139 |
-| gpt-6-sol | 0.0061 |
-| muse-spark-1.2 | 0.0043 |
-| glm-5.3-flash | 0.0004 |
-| gpt-6-luna | 0.0003 |
+| model | number | IoU square | IoU ellipse | cost | seconds | reasoning tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| `gpt-6.1-sol` | 42 | 0.99 | 0.99 | $0.00070 | 1.8 | 0 |
+| `claude-opus-5.5` | 42 | 0.99 | 0.99 | $0.00342 | 1.9 | 0 |
+| `gpt-6.1-terra` | 42 | 0.99 | 0.99 | $0.00050 | 2.2 | 58 |
+| `gemini-3.8-flash` | 42 | 0.98 | 0.98 | $0.00149 | 101 | 498 |
+| `gemini-3.1-pro-preview` | 42 | 0.96 | 0.97 | $0.00156 | 190 | 0 |
+| `deepseek-v4.1-flash` | 42 | 1.00 | 0.80 | $0.00069 | 6.5 | 1053 |
+| `grok-4.7` | 42 | 0.78 | 0.78 | $0.00367 | 5.2 | 305 |
+| `gemini-4-argon` | 42 | 0.70 | 0.98 | $0.00307 | 5.3 | 0 |
+| `mimo-v2.6-pro` | 42 | 0.00 | 0.19 | $0.00059 | 8.3 | 298 |
 
-Use current `usage.cost` for accounting. Image tokenisation, output length, reasoning effort,
-provider routing and caching all affect the bill. The historical Gemini input-token counts were
-lower for that one image, not proof of a fixed discount for all resolutions or tasks.
+What it supports: every model read the number and returned parseable JSON; three models returned
+boxes accurate to about 1% and agreed with each other to four decimals; Grok's boxes carried a
+consistent +0.02 bias on both axes, which is the kind of error a pixel check catches and a prose
+answer hides; Gemini 4 Argon extended one box into the number; MiMo returned boxes that look like
+grid guesses; DeepSeek produced a pixel-exact square and a loose ellipse while spending 1053
+reasoning tokens at low effort.
 
-The CLI defaults to `--effort high`. Lower it for bulk work where the extra reasoning does not
-change the answer; the measured price difference between low and high effort exceeded the
-difference between models. `default` omits the effort field. Some endpoints, including previously
-tested GLM endpoints, require reasoning and reject `none`; the CLI reports that error instead of
-silently changing settings. Reasoning tokens count as output tokens, so a high effort with a
-small output allowance can consume the allowance before an answer is returned. Catalog 2026-10-03:
-`openai/gpt-6.1-sol` has mandatory reasoning (efforts max/xhigh/high/medium/low, default medium),
-takes text, image and file input, and lists $0.000002 prompt / $0.00001 completion per token.
+Latency on the `flex` pins varied by two orders of magnitude: the same Gemini 3.8 Flash prompt took
+2 s, 48 s and 101 s on different calls, and Gemini 3.1 Pro took 190 s. Raise `--timeout` before
+concluding a flex call has failed.
 
-Several models advertise native video, but this CLI sends still images only. See the video-frame
-recipe for explicit sampling and timing limitations.
+Earlier evidence collected on real photographs, which no single test card can reproduce: open-weight
+and mid-tier models spend most of their output on reasoning and truncate when the allowance is
+small; prose answers with shading or lighting arguments were the ones that failed an independent
+pixel check, while numeric claims could be checked and mostly survived; and confidence percentages
+were uncalibrated in both directions.
+
+## Choosing when the task matters
+
+Use one cheap strong model first (`gpt-6.1-terra` or `gemini-3.8-flash`), read its answer, then buy
+a second opinion only if the answer turns on something you cannot verify yourself. Spend the
+expensive models on the question that decides the outcome, not on a broad sweep: in the worked
+geolocation task the decisive comparison cost $0.09 on Gemini 3.1 Pro, while $0.96 on the most
+expensive model produced a fine description and no discriminating claim.
+
+Reasoning effort moves cost more than model choice does. `low` is enough for inventory and reading;
+reserve `high` for geometry, and give it 6000 or more output tokens so the reasoning does not eat
+the answer.

@@ -6,8 +6,9 @@ origin top left, relative to the EXIF-oriented image named in the answer.
 
 ## 1. Object identification and localisation
 
-Start with Gemini 3.1 Pro for stated classes, GPT-6 Sol for a less expensive localisation pass, or
-GPT-6 Astra for a difficult localisation question. Boxes are approximate, not masks.
+Gemini 4 Argon for a hard scene, GPT-6.1 Sol or GPT-6.1 Terra for a cheaper localisation pass.
+On one test card the OpenAI pair and Opus 5.5 returned boxes within about 1% of the true edges, so
+this family is the safer choice when the coordinates will be used. Boxes are approximate, not masks.
 
 ```text
 Image 1 is the overview of <scene/object>. I need to find <target classes>.
@@ -22,8 +23,9 @@ For dense counts, report approximate counts and occlusion rather than false prec
 
 ## 2. Colour, design and taste
 
-Opus 5.5 or Fable 5.1 are starting choices; Muse Spark 1.2 can provide a cheaper second opinion.
-There is no task-specific evidence here establishing their reliability for the user's taste.
+Claude Opus 5.5 or Gemini 4 Argon are starting choices; Gemini 3.8 Flash or Grok 4.7 can provide a
+cheaper second opinion. There is no task-specific evidence establishing any model's reliability
+for the user's taste, so compare pairs and let the user decide.
 
 ```text
 This is <room/garden/layout/object>. The goal is <intended use and style>.
@@ -39,7 +41,10 @@ physical paint, fabric or plants. Use references or physical samples for consequ
 
 ## 3. OCR
 
-Fable 5.1 is a starting reader; Muse Spark 1.2 is an alternative.
+Gemini 4 Argon is the starting reader, with Claude Opus 5.5 as the second opinion. Gemini 3.8
+Flash is adequate for clean, large text. Decide from the pixel height of the text whether it is
+legible at all before paying for a read: at several hundred metres a sign is a few pixels tall, and
+the honest answer is that no text is legible.
 
 ```text
 Read the visible text in image 1. Preserve language, punctuation, line breaks and reading order.
@@ -54,7 +59,8 @@ does not prove a blurry transcription correct.
 
 ## 4. Image correspondence
 
-Use GPT-6 Astra or Opus 5.5 for difficult pairs; try a cheaper reader first when features are clear.
+Use Gemini 4 Argon or Claude Opus 5.5 for difficult pairs; try GPT-6.1 Terra first when features
+are clear.
 This is about corresponding visible objects/features, not identifying people.
 
 ```text
@@ -71,9 +77,9 @@ when pixel correspondences, registration or measurement accuracy matter.
 
 ## 5. Image-quality assessment and triage
 
-Use GLM 5.3 Flash or GPT-6 Luna for a rough first pass, then a stronger model for shortlisted pairs.
-A cheap model can be wrong; preserve uncertain and negative cases rather than silently discarding
-potentially useful photos.
+Use DeepSeek V4.1 Flash or Gemini 3.8 Flash for a rough first pass, then a stronger model for
+shortlisted pairs. A cheap model can be wrong; preserve uncertain and negative cases rather than
+silently discarding potentially useful photos.
 
 ```text
 Assess visible image defects for <intended use>. Return a JSON object with fields:
@@ -86,7 +92,7 @@ Batch file example, paths relative to the task file:
 
 ```json
 [
-  {"tag": "quality", "model": "z-ai/glm-5.3-flash",
+  {"tag": "quality", "model": "deepseek/deepseek-v4.1-flash-1017",
    "images_dir": "candidates", "glob": "*.jpg",
    "prompt": "Return JSON describing visible blur, clipping and occlusion; use uncertain where needed.",
    "effort": "low", "max_tokens": 800, "json": true}
@@ -103,8 +109,9 @@ not solely from a small overview.
 
 ## 6. Data plots, tables and screenshots
 
-Gemini 3.8 Flash is a starting reader. Use Opus 5.5 or GPT-6 Astra for difficult interpretation;
-Fable 5.1 or Muse Spark 1.2 can discuss presentation separately.
+Gemini 3.8 Flash is a starting reader; GPT-6.1 Terra is the better choice for screenshots and
+interface captures. Use Gemini 4 Argon or Claude Opus 5.5 for difficult interpretation, and ask
+about presentation in a separate call.
 
 ```text
 Read this <plot/table/dashboard>. First report title, axes, units, scale type, series labels and
@@ -163,10 +170,36 @@ motion or the audio content. Estimate the number of images and calls before a lo
 
 ```sh
 python3 skills/vision_skill/scripts/vision.py panel \
-  --models google/gemini-3.1-pro-preview,anthropic/claude-opus-5.5 \
+  --models google/gemini-4-argon,anthropic/claude-opus-5.5 \
   --image frame.png --prompt-file question.txt --tag independent-readers
 ```
 
 Compare the evidence before showing one answer to another model. A later critique can investigate
 contradictions, but it is no longer an independent reading. Stop when additional calls are unlikely
 to resolve the uncertainty. End with `cost` and include the reported spend in the user summary.
+
+## 10. Candidate elimination
+
+The most productive shape of question found so far, and the only one in a worked investigation that
+picked the correct site out of four candidates. Use it whenever you can build a candidate list from
+a map, catalogue, registry or the user's own knowledge, and use models to test the list rather than
+recall the answer.
+
+Prepare one image per candidate, cropped and oriented the same way, and say which is which. Put the
+target first if there are few enough images to keep the order legible.
+
+```text
+Image 1 is the target: a photograph taken from <known position and direction, if known>.
+Images 2-6 are candidate sites, each rendered from map imagery with north up unless stated.
+For each candidate: list the features that would match Image 1, the features that contradict it,
+and give a match percentage. Rank the candidates and name, for each, the single observation that
+rules it out. If none match, say so and name the feature that no candidate explains.
+```
+
+Then check the contradictions yourself against map data, road geometry or pixel measurements. In
+the worked case the decisive answer cost $0.09 and its four contradiction claims, not its 100%
+verdict, were what made the choice defensible: three held outright and one was consistent with the
+candidate's own measured geometry. Expect the percentage to be overconfident; ignore it.
+
+When no candidate matches, the exclusion list tells you what the true answer must have that your
+list lacks, which is a concrete next search rather than a dead end.

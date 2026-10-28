@@ -76,9 +76,9 @@ def _gps_decimal(coord, ref):
 def open_image(path):
     path = Path(path)
     if not path.is_file():
-        raise SystemExit(f"cannot read {path}: no such file")
+        raise ValueError(f"cannot read {path}: no such file")
     if path.stat().st_size == 0:
-        raise SystemExit(f"cannot read {path.name}: the file is empty")
+        raise ValueError(f"cannot read {path.name}: the file is empty")
     if path.suffix.lower() in RAW_SUFFIXES:
         return _open_raw(path)
     try:
@@ -91,19 +91,19 @@ def open_image(path):
         pillow_heif.register_heif_opener()
     except ImportError:
         if path.suffix.lower() in PILLOW_SUFFIXES:
-            raise SystemExit(f"cannot read {path.name}: Pillow could not decode it, so the file is " "damaged or not really an image.")
-        raise SystemExit(f'cannot read {path.name}: Pillow has no reader for {path.suffix or "this format"}. ' "For HEIC/AVIF install pillow-heif; otherwise convert the file to JPEG or PNG.")
+            raise ValueError(f"cannot read {path.name}: Pillow could not decode it, so the file is " "damaged or not really an image.")
+        raise ValueError(f'cannot read {path.name}: Pillow has no reader for {path.suffix or "this format"}. ' "For HEIC/AVIF install pillow-heif; otherwise convert the file to JPEG or PNG.")
     try:
         return Image.open(path)
     except Exception as exc:
-        raise SystemExit(f"cannot read {path.name}: {exc}")
+        raise ValueError(f"cannot read {path.name}: {exc}")
 
 
 def _open_raw(path):
     try:
         import rawpy
     except ImportError:
-        raise SystemExit(f"cannot read {path.name}: it is a raw file and rawpy is not installed. " "Install rawpy, or export a JPEG/PNG from the raw first.")
+        raise ValueError(f"cannot read {path.name}: it is a raw file and rawpy is not installed. " "Install rawpy, or export a JPEG/PNG from the raw first.")
     # A raw thumbnail is not the original resolution needed for detail crops.
     with rawpy.imread(str(path)) as raw:
         return Image.fromarray(raw.postprocess(use_camera_wb=True)).convert("RGB")
@@ -272,10 +272,10 @@ def parse_box(text):
         parts = [float(x) for x in text.replace(":", ",").split(",")]
         box = tuple(parts)
     if len(box) != 4 or not all(0.0 <= v <= 1.0 for v in box):
-        raise SystemExit("--box needs four comma-separated fractions between 0 and 1: " "left,top,right,bottom")
+        raise ValueError("--box needs four comma-separated fractions between 0 and 1: " "left,top,right,bottom")
     left, top, right, bottom = box
     if right <= left or bottom <= top:
-        raise SystemExit(f"--box {text} is empty: right must exceed left and bottom must exceed top")
+        raise ValueError(f"--box {text} is empty: right must exceed left and bottom must exceed top")
     return box
 
 
@@ -292,5 +292,19 @@ def variant_list(preset, box=None, long_edge=0, scale=1.0, contrast=1.0, sharpen
     if box or long_edge or scale != 1.0 or contrast != 1.0 or sharpen != 1.0 or name:
         return custom_variants(box, long_edge, scale, contrast, sharpen, quality, name)
     if preset not in PRESETS:
-        raise SystemExit(f'unknown preset {preset!r}; choose from {", ".join(PRESETS)}')
+        raise ValueError(f'unknown preset {preset!r}; choose from {", ".join(PRESETS)}')
     return [replace(v, quality=quality) for v in PRESETS[preset]]
+
+
+def probe_card(path):
+    # Synthetic card for the paid reachability probe: a legible number, a coloured square and a
+    # distinct shape. Drawn locally so the probe needs no user image and no personal data.
+    from PIL import ImageDraw
+
+    width, height = 640, 480
+    image = Image.new("RGB", (width, height), (250, 250, 246))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([40, 40, 200, 200], fill=(200, 30, 30))
+    draw.ellipse([430, 60, 600, 230], fill=(25, 70, 190))
+    draw.text((250, 210), "42", fill=(10, 10, 10), font_size=190)
+    return save(image, Path(path), quality=92)["path"]

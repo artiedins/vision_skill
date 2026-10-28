@@ -1,6 +1,8 @@
 # Vision skill
 
-A stand-alone skill for image understanding through eleven allowed OpenRouter models. It includes
+A stand-alone skill for image understanding through nine allowed OpenRouter models. Each model is
+pinned to one provider endpoint, and every request sets `provider.only` with
+`allow_fallbacks: false`, so a call either reaches the pinned endpoint or fails loudly. It includes
 agent instructions, a Python CLI, local crop/resize helpers, saved responses and cost records.
 It supports varied vision tasks rather than one application. It does not generate images or send
 native video; sample video frames first.
@@ -35,7 +37,10 @@ python3 skills/vision_skill/scripts/vision.py cost
 ```
 
 Defaults are high reasoning effort and 4,000 output tokens, including reasoning. Commands:
-`status`, `models`, `info`, `prep`, `ask`, `panel`, `batch`, `start`, `cost`, `spend`.
+`status`, `models`, `probe`, `info`, `prep`, `ask`, `panel`, `batch`, `start`, `cost`, `spend`.
+`models` shows each pinned endpoint, whether it is still offered and its price; `probe` makes one
+tiny paid call per model to prove the pinned endpoint serves this account (about $0.01 for all
+nine at low effort).
 `python3 skills/vision_skill/scripts/vision.py COMMAND --help` lists options; adjust the path if
 the skill lives elsewhere. Global flags go before the command.
 
@@ -45,13 +50,16 @@ credit; it needs `OR_MGMNT_KEY`. Workspace conventions (state directory, spend p
 path) are at the end of [SKILL.md](SKILL.md).
 
 For an agent, start with [SKILL.md](SKILL.md). See [recipes](references/recipes.md) for object
-localisation, colour/design, OCR, correspondences, image-quality assessment and plot analysis.
+localisation, colour/design, OCR, correspondences, image-quality assessment, plot analysis and
+candidate elimination, and [workflow](references/workflow.md) for questions that need several
+rounds of looking.
 
 ## State
 
 `vision_runs/` under the **current working directory** is the default state directory. It contains
-`ledger.jsonl`, `session.json`, `runs/`, a catalog cache and, during a request, `pending.json`.
-Use `--state-dir DIR` to put it anywhere. All cost totals cover one state directory.
+`ledger.jsonl`, `session.json`, `runs/`, caches of the model catalog and the per-model endpoint
+lists, the `probe` card and, during a request, `pending.json`. Use `--state-dir DIR` to put it
+anywhere. All cost totals cover one state directory.
 
 - `start` begins a new session for cost reporting; it never resets ledger totals. A first paid
   request starts a session if none exists.

@@ -181,9 +181,20 @@ Habits that make an answer checkable:
 - **Expect silent revisions.** The same model can decide the opposite between rounds without
   flagging it. Every call is saved under the state directory, so cite the round you relied on and
   say when a later round overruled it.
-- **Budget reasoning tokens.** Reasoning counts as output. Several models spend 300-1000 tokens
-  before answering at low effort, and an exhausted allowance returns an empty answer,
-  `finish_reason: length`, and a bill.
+- **Ask for the feature you will match on, explicitly.** On a real photograph the model with the
+  longest, most precise inventory (46 roof centres) never mentioned the orange bands on the one
+  building the whole matching test depended on. Granularity is not discrimination. Name the feature
+  in the prompt and check its coordinates.
+- **Never ask for a compass heading without giving a reference.** Given no north in the frame, the
+  three models that answered invented 20, 30 and 340 degrees for a camera facing about 270; the four
+  that refused were the useful ones. Supply the sun azimuth or a known bearing first, and treat any
+  heading number as a hypothesis to test against shadow geometry.
+- **Distrust prose about light and shade.** Two of seven models reversed the shadow direction on the
+  same photograph, one of them the second most expensive. Measure a shadow centroid in pixels instead.
+- **Budget reasoning tokens by scene.** Reasoning counts as output. On a real photograph at effort
+  `low` with a 2500-token cap, DeepSeek and MiMo spent the whole allowance on reasoning and returned
+  empty answers, fully charged, while Sol used 51 tokens for the same task. Give scene work 4000+
+  tokens; an exhausted allowance costs the call and yields nothing.
 
 ## Batch and resume
 
@@ -229,8 +240,8 @@ it. Do not substitute a model outside the list.
 | `google/gemini-3.1-pro-preview` | `google-vertex/global/flex` | constrained comparison between named candidates |
 | `google/gemini-3.8-flash` | `google-vertex/global/flex` | charts, tables, bulk first pass |
 | `x-ai/grok-4.7` | `xai/zdr` | second opinion, blunt critique |
-| `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | captioning only; boxes failed a coordinate test |
-| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | cheapest calls; spends tokens on reasoning |
+| `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | captioning only; weak boxes, and it exhausted 2500 tokens on a photo |
+| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | cheapest calls; reasoning can consume the whole allowance |
 
 The pin is enforced in the request with `provider.only` and `allow_fallbacks: false`, so a call
 either reaches that endpoint or fails with HTTP 404 naming the providers that do serve the model.
@@ -244,9 +255,11 @@ python3 skills/vision_skill/scripts/vision.py probe
 ```
 
 `models` prints each pin, whether it is in the live endpoint list, its health status and its
-per-million-token prices. `probe` makes one tiny paid call per model with a synthetic card: the
-cheapest end-to-end proof that a pinned endpoint serves this account, and the only way to see an
-account data-policy refusal. All nine cost about $0.01 with `--effort low`.
+per-million-token prices. Measured scene-reading behaviour, including the two models that return
+nothing at a small token cap, is in the photograph test of
+[references/models.md](references/models.md). `probe` makes one tiny paid call per model with a
+synthetic card: the cheapest end-to-end proof that a pinned endpoint serves this account, and the
+only way to see an account data-policy refusal. All nine cost about $0.01 with `--effort low`.
 
 Model-selection notes, measured prices and dated evidence are in
 [references/models.md](references/models.md). For prompts, load only the relevant parts of
@@ -270,7 +283,8 @@ the recipes are worked examples for ideation, not a required workflow.
 - Shared state is locked during paid commands and session changes. Concurrent writers fail rather
   than corrupt the ledger. Damaged ledgers also stop work.
 - Exit 2 is argparse syntax errors. Other errors exit nonzero. A completed call may still be charged
-  even when its answer is unusable.
+  even when its answer is unusable. The message names the cause: `finish_reason=length` with the
+  reasoning tokens spent means the token allowance, not the model, was the limit.
 
 Finish with `python3 skills/vision_skill/scripts/vision.py cost` and report the calls made and the
 totals. If costs are unknown, say the total is incomplete. `cost --json` includes per-model costs.

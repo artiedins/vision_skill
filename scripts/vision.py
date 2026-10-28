@@ -64,6 +64,21 @@ def saved_result(record):
     return {"meta": record, "answer": answer, "parsed": runs.extract_json(answer), "skipped": True}
 
 
+def failure_message(meta, structured):
+    # Name the actual cause so the next call can be fixed instead of guessed at. A truncated
+    # reasoning-only answer is the common failure and reads as "not JSON" without this.
+    finish = meta.get("finish_reason") or "no finish_reason"
+    parts = [f"finish_reason={finish}"]
+    if meta.get("reasoning_tokens"):
+        spent = f"{meta['reasoning_tokens']} of max_tokens={meta.get('max_tokens')}"
+        parts.append(f"reasoning_tokens={spent}")
+    if structured:
+        parts.append("no parseable JSON")
+    if finish == "length":
+        parts.append("raise --max-tokens or lower --effort")
+    return f"answer incomplete or refused ({', '.join(parts)}); saved and charged, not marked complete"
+
+
 def do_call(cfg, request, quiet=False, resume=False):
     payload = make_payload(request)
     fingerprint = runs.fingerprint(payload)
@@ -131,7 +146,7 @@ def do_call(cfg, request, quiet=False, resume=False):
         # Unknown cost stays unknown; pending.json keeps the response so it can be reconciled later.
         print("vision: WARNING no reported cost; this call is excluded from totals until reconciled", file=sys.stderr)
     if not meta["success"]:
-        raise ValueError("answer incomplete, refused, errored or not JSON as requested; saved and " "charged in ledger, not marked complete. No automatic retry.")
+        raise ValueError(failure_message(meta, structured))
     if not quiet:
         print(json.dumps(parsed, indent=2, ensure_ascii=False) if structured else answer)
     return {"meta": meta, "answer": answer, "parsed": parsed, "skipped": False}

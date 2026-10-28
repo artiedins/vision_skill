@@ -27,7 +27,9 @@ first on the list the user checked, and it was the true site.
 
 1. **Frame the problem with facts the model cannot see.** Date, local time, device, field of view,
    sun position, measured percentages of sky and ground, known scale references. Say which numbers
-   are measured and which are assumptions. A model given no geometry will invent some.
+   are measured and which are assumptions. A model given no geometry will invent some: asked for a
+   compass heading from a frame with no north reference, three of seven models answered 20, 30 and
+   340 degrees for a camera that was facing about 270.
 2. **Ask for an inventory with coordinates.** "List every building, with a box as fractions of the
    image", "give the base and shadow-far point of this vase". Numbers can be checked against pixels;
    adjectives cannot. Check the boxes before you build on them: several models are accurate to a few
@@ -56,10 +58,14 @@ first on the list the user checked, and it was the true site.
   you report. A summary that stops at round 1 can keep an answer the model itself abandoned.
 - **Prefer the answer that is checkable to the one that sounds confident.** A number you can verify,
   a named feature you can find on a map, or a stated falsifier beats fluent prose.
+- **Measure the light; do not read it.** Two of seven models reversed which way the shadows run on
+  the same photograph. A shadow centroid against a known base is a measurement you can make yourself
+  and one the model cannot talk its way around.
 - **Reasoning tokens are output tokens.** Low effort still spends hundreds of them on some models,
   and a high effort with a small token allowance returns an empty answer with
-  `finish_reason: length`, fully charged. Budget at least 2000-4000 tokens for inventory work and
-  6000+ for a deliberate high-effort geometry pass.
+  `finish_reason: length`, fully charged. On a real photograph at effort `low`, two of nine models
+  burned a 2500-token cap on reasoning and returned nothing. Give scene and inventory work 4000+
+  tokens, and 6000+ for a deliberate high-effort geometry pass.
 - **Do not ask for text that cannot be there.** At 400-800 m a sign is a few pixels tall. A good
   model says so and spends your money saying it; a weaker one invents a plausible transcription.
   Decide from the pixel scale before you ask.

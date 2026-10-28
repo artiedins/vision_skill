@@ -37,15 +37,20 @@ Prices are the pinned endpoint's catalog price per million tokens, in and out.
 | `google/gemini-4-argon` | `google-vertex/global` | 2 / 10 | strongest all-round reading; start here when the answer must be right |
 | `google/gemini-3.1-pro-preview` | `google-vertex/global/flex` | 1 / 6 | constrained comparison between named candidates |
 | `google/gemini-3.8-flash` | `google-vertex/global/flex` | 0.375 / 1.875 | bulk passes: plots, tables, first-pass inventory |
-| `x-ai/grok-4.7` | `xai/zdr` | 2 / 6 | second opinion, blunt critique; unrated beyond one test |
-| `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | 0.37 / 0.739 | captioning and description only; boxes were wrong in testing |
-| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | 0.103 / 0.6 | cheapest calls; spends heavily on reasoning before it answers |
+| `x-ai/grok-4.7` | `xai/zdr` | 2 / 6 | second opinion and blunt critique; refuses headings instead of inventing them |
+| `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | 0.37 / 0.739 | captioning only: boxes failed the card test, and it returned nothing at 2500 tokens on a photo |
+| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | 0.103 / 0.6 | cheapest calls of all; reasoning ate a 2500-token cap on a real photo and returned nothing |
 
-## One measured test, and what it does and does not show
+## Two measured tests
 
-One synthetic card (640x480: red square, blue ellipse, large "42"), identical prompt, effort
-`low`, 4000-token allowance, asked for the number and both boxes as fractions. Only one image per
-model was tested, so read this as output-format evidence, not a capability ranking.
+Neither is a capability ranking: each uses one image per model. Read the card test as output-format
+and coordinate evidence, and the photograph test as evidence about scene reading, reasoning cost and
+the two questions models answer badly (heading, light direction).
+
+### Test 1: a synthetic card
+
+One synthetic card (640x480: red square, blue ellipse, large "42"), identical prompt, effort `low`,
+4000-token allowance, asked for the number and both boxes as fractions.
 
 | model | number | IoU square | IoU ellipse | cost | seconds | reasoning tokens |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -70,11 +75,67 @@ Latency on the `flex` pins varied by two orders of magnitude: the same Gemini 3.
 2 s, 48 s and 101 s on different calls, and Gemini 3.1 Pro took 190 s. Raise `--timeout` before
 concluding a flex call has failed.
 
-Earlier evidence collected on real photographs, which no single test card can reproduce: open-weight
-and mid-tier models spend most of their output on reasoning and truncate when the allowance is
-small; prose answers with shading or lighting arguments were the ones that failed an independent
-pixel check, while numeric claims could be checked and mostly survived; and confidence percentages
-were uncalibrated in both directions.
+### Test 2: a real photograph
+
+The photograph is the 3264x2448 iPhone frame of a hillside cemetery looking down a valley that the
+geolocation task in `references/workflow.md` was solved from, prepared at 1400 px. Identical
+six-part prompt (foreground with coordinates, every building with a roof-centre coordinate, terrain,
+light, compass heading, falsifier), effort `low`, 2500-token allowance, one call per model, $0.0822
+for the panel.
+
+The scoring facts were measured from the pixels of that file, not taken from any model: orange
+flower mass at (0.10, 0.87), same class spread over x 0.06-0.16, y 0.83-0.92; the orange-banded
+warehouse band at x 0.48-0.61, y 0.54-0.59 (1014 px, the largest orange object below the skyline,
+against 42 px in the village at x 0.18-0.24); saturated blue roofs concentrated in the right half at
+y 0.47-0.55 (332 of 371 blue pixels at a coarse scale), with small blue village roofs at x 0.13-0.24;
+a hazy far ridge at x 0.75-1.00, y 0.33-0.38; a high left ridge cresting at y 0.18 around x 0.2-0.35.
+Independent truth for light and heading comes from the EXIF clock and sun geometry: 10:42 KST, sun
+azimuth 147.5, altitude 44.7, camera facing roughly west, so shadows run to the image right.
+
+| model | cost | sec | answer | flowers at (0.10, 0.87) | orange band at (0.54, 0.56) | shadows right | heading |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `gpt-6.1-sol` | $0.00818 | 19 | 46 roofs with boxes | prose only | building yes, orange no | yes | refused |
+| `claude-opus-5.5` | $0.03576 | 20 | full, richest prose | yes, (0.13, 0.91) | yes | yes | **20 deg** |
+| `gemini-4-argon` | $0.01217 | 19 | full, 23 roofs | yes, (0.13, 0.91) | yes | **no, shadows left** | **340 deg** |
+| `gpt-6.1-terra` | $0.00245 | 9 | 20 roofs | prose only | building yes, orange no | yes | refused |
+| `gemini-3.8-flash` | $0.00146 | 23 | 11 roofs | yes, (0.10, 0.88) | yes | **no, shadows left** | **30 deg** |
+| `grok-4.7` | $0.01416 | 27 | 10 roofs | "flower pots" | yes | yes | refused |
+| `gemini-3.1-pro-preview` | $0.00389 | 24 | 20 roofs | prose only | building yes, orange no | yes | refused |
+| `deepseek-v4.1-flash` | $0.00162 | 23 | **none** | - | - | - | - |
+| `mimo-v2.6-pro` | $0.00247 | 76 | **none** | - | - | - | - |
+
+What it supports:
+
+- **A real scene costs far more reasoning than a test card.** At the same effort and a 2500-token cap,
+  DeepSeek and MiMo spent all 2500 tokens on reasoning and returned `content: null` with
+  `finish_reason: length`, fully charged. On the card that cap still left DeepSeek answering, using
+  1053 reasoning tokens. Sol needed 51 reasoning tokens for the photograph, Terra 45, Opus 267, Grok
+  1401.
+- **Every model that gave a compass heading was wrong**, including Opus 5.5, the dearest model on the
+  list: it said 20 (hedged as low confidence), Gemini 4 Argon 340, Gemini 3.8 Flash 30, against a
+  camera facing about 270. The four that refused (Sol, Terra, Grok, Gemini 3.1 Pro) were right to refuse.
+  A heading question with no north reference in the frame produces confident numbers, so supply the
+  sun position or a known bearing in the prompt.
+- **Light direction is the least reliable prose claim.** Two of seven reversed it: Argon put the sun
+  behind-right with shadows left, Flash front-right with shadows left, and the photograph runs the
+  other way. Shadow centroids can be measured from pixels, which is what settled the heading in the
+  geolocation task.
+- **Granularity is not discrimination.** Sol returned the longest inventory, 46 roof centres at three
+  decimal places, and never flagged the orange bands on the building at (0.54, 0.56) that the whole
+  matching test rested on. Argon, Opus, Flash and Grok named that band; Terra, Sol and Gemini 3.1 Pro
+  located the building but not the feature. Ask for the feature you intend to match on.
+- **Coordinates several vendors repeat are probably real.** Flowers at (0.10-0.13, 0.88-0.91), the
+  orange band at (0.54, 0.55) and the haze at x 0.75-1.00, y 0.33-0.38 came back nearly identical from
+  independent families and match the pixels. The left ridge centre was repeated too and was still off
+  by 0.05-0.1, so repetition narrows a coordinate without guaranteeing it.
+- **The pins held.** Each call reported the provider its pin names (Morph, GMICloud, OpenAI, Amazon
+  Bedrock, Google, xAI), so this panel doubles as a second end-to-end check of the routing.
+
+Earlier evidence from the geolocation project that neither test reproduces: open-weight and mid-tier
+models spend most of their output on reasoning and truncate when the allowance is small; prose answers
+with shading or lighting arguments were the ones that failed an independent pixel check, while
+numeric claims could be checked and mostly survived; confidence percentages were uncalibrated in both
+directions.
 
 ## Choosing when the task matters
 

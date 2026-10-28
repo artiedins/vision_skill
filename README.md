@@ -95,5 +95,6 @@ starting sizes, not claims about every model's native image resolution.
 Metadata stripping is not visual redaction. Local transcripts contain prompts, file paths,
 responses and request settings, but no credentials or uploaded image bytes.
 
-No tests, test images, credentials or personal data ship with the skill. No license has been
-selected; choose one before offering the code for reuse.
+No tests, test images, credentials or personal data ship with the skill. The code is under
+[Apache-2.0](LICENSE). The copyright line in that file is still the template placeholder; fill it in
+before publishing.

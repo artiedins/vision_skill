@@ -1,7 +1,8 @@
 ---
 name: vision
-description: Use OpenRouter vision models to identify or locate objects, discuss colour and design, read text and plots, compare images, assess image quality, or inspect sampled video frames. Includes local image preparation, a nine-model allow-list in which each model is pinned to one provider endpoint, a paid endpoint probe, saved answers and per-call cost records.
+description: Use OpenRouter vision models to identify or locate objects, discuss colour and design, read text and plots, compare images against each other or against candidate map imagery, assess image quality, or inspect sampled video frames. Includes local image preparation, a nine-model allow-list in which each model is pinned to one provider endpoint, a paid endpoint probe, saved answers and per-call cost records.
 compatibility: Requires Python 3.10+, Pillow, network access to openrouter.ai and an inference API key. Optional rawpy for camera raw, pillow-heif for HEIC, and ffmpeg for video frame extraction.
+license: Apache-2.0
 metadata:
   cost: paid inference with local per-call cost records
 ---
@@ -32,14 +33,13 @@ Credentials come from `OR_API_KEY` (inference) and optional `OR_MGMNT_KEY` (acco
 `.env` in the working directory or the skill directory, otherwise from environment variables of
 the same names. `status` reports which were found and reads account credit totals.
 
-### House conventions in this workspace
+### Conventions this skill assumes
 
-- Run from `/workspace`; the CLI is `skills/vision_skill/scripts/vision.py` and the state directory
-  is `/workspace/vision_runs/` (ledger, per-call run transcripts). Keep using that one directory so
-  cost totals stay in one place. The state directory can be deleted once its totals are recorded
-  somewhere durable (NOTES, task report).
-- Keys live in `/workspace/.env`: `OR_API_KEY` for inference, `OR_MGMNT_KEY` for account reads
-  (`status`, `spend`). `--env-file` is never needed from `/workspace`. `.env` is never committed.
+- Run from the project root, so the CLI path above resolves. Keep one state directory per project
+  (the default `vision_runs/` in the project root) and keep returning to it, or cost totals split
+  across directories. Once its totals are recorded somewhere durable, the directory can be deleted.
+- Put `OR_API_KEY` and `OR_MGMNT_KEY` in a `.env` in the project root; the CLI finds it there
+  without `--env-file`. Never commit `.env`.
 
 At a genuine new session boundary:
 
@@ -49,15 +49,15 @@ python3 skills/vision_skill/scripts/vision.py start --note "compare the candidat
 
 #### Spend policy and how to track it
 
-The owner's policy, in escalating tiers: below **$0.25** for a task, spend is not worth mentioning;
-up to roughly **$1-2**, at the agent's discretion but report the amount; above a couple of dollars,
-ask first. The owner may grant an explicit budget (for example $2 or $5) and wants the best models
-used when the task matters.
+A default policy, in escalating tiers; adjust the numbers to suit the account: below **$0.25** for a
+task, spend is not worth mentioning; up to roughly **$1-2**, at the agent's discretion but report the
+amount; above a couple of dollars, ask first. When the user grants an explicit budget (for example
+$2 or $5), spend it on the best models for the questions that decide the answer.
 
 Two independent numbers, two meanings:
 
-- `cost` (the ledger) is the **authority for calls made from this workspace**. It counts only what
-  this state directory actually spent, per model, and survives nothing else.
+- `cost` (the ledger) is the **authority for calls made from this state directory**. It counts only
+  what that directory actually spent, per model, and survives nothing else.
 - `spend` / `status` read **OpenRouter's whole account**, which has a pre-existing balance and
   pre-existing spend that have nothing to do with the current task. Never report the raw account
   total as the task's cost.

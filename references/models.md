@@ -77,11 +77,11 @@ concluding a flex call has failed.
 
 ### Test 2: a real photograph
 
-The photograph is the 3264x2448 iPhone frame of a hillside cemetery looking down a valley that the
-geolocation task in `references/workflow.md` was solved from, prepared at 1400 px. Identical
-six-part prompt (foreground with coordinates, every building with a roof-centre coordinate, terrain,
-light, compass heading, falsifier), effort `low`, 2500-token allowance, one call per model, $0.0822
-for the panel.
+The photograph is the frame behind the geolocation example in `references/workflow.md`, prepared at
+1400 px: a 3264x2448 phone-camera frame taken on a hillside, looking down a valley with a village and
+warehouses below. Identical six-part prompt (foreground with coordinates, every building with a
+roof-centre coordinate, terrain, light, compass heading, falsifier), effort `low`, 2500-token
+allowance, one call per model, $0.0822 for the panel.
 
 The scoring facts were measured from the pixels of that file, not taken from any model: orange
 flower mass at (0.10, 0.87), same class spread over x 0.06-0.16, y 0.83-0.92; the orange-banded
@@ -89,8 +89,9 @@ warehouse band at x 0.48-0.61, y 0.54-0.59 (1014 px, the largest orange object b
 against 42 px in the village at x 0.18-0.24); saturated blue roofs concentrated in the right half at
 y 0.47-0.55 (332 of 371 blue pixels at a coarse scale), with small blue village roofs at x 0.13-0.24;
 a hazy far ridge at x 0.75-1.00, y 0.33-0.38; a high left ridge cresting at y 0.18 around x 0.2-0.35.
-Independent truth for light and heading comes from the EXIF clock and sun geometry: 10:42 KST, sun
-azimuth 147.5, altitude 44.7, camera facing roughly west, so shadows run to the image right.
+Independent truth for light and heading comes from the EXIF clock and sun geometry: 10:42 local
+time, sun azimuth 147.5, altitude 44.7, camera facing roughly west, so shadows run to the image
+right.
 
 | model | cost | sec | answer | flowers at (0.10, 0.87) | orange band at (0.54, 0.56) | shadows right | heading |
 | --- | --- | --- | --- | --- | --- | --- | --- |

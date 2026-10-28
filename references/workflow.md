@@ -17,11 +17,11 @@ shadow geometry, pixel measurements on the original file, a database, the user's
 Build the candidate set there. Use the models to describe the frame and to test candidates, not to
 invent them.
 
-The task that produced this guidance found its answer this way. No model, asked cold, named the
-correct site; every free guess was wrong. What worked was an inventory of buildings with fractional
-coordinates, matched by code against map data, then one call that showed the photograph beside four
-candidate aerials and asked which was contradicted. The cheap model that did the comparison was
-first on the list the user checked, and it was the true site.
+A geolocation investigation that produced this guidance found its answer this way. No model, asked
+cold, named the correct place; every free guess was wrong. What worked was an inventory of buildings
+with fractional coordinates, matched by code against map data, then one call that showed the
+photograph beside four candidate aerials and asked which was contradicted. The cheap model that did
+the comparison was first on the list of candidates the user checked, and it was the true site.
 
 ## Round structure
 

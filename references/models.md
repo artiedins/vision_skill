@@ -20,7 +20,7 @@ OpenRouter's live endpoint list, that endpoint's health status and its per-milli
   region matters.
 - `service_tier` endpoints (`flex`, `priority`) are separate targets and are usually priced
   differently from their standard sibling. The pin decides the price: the same Gemini 3.8 Flash
-  frame cost $0.000567 on `google-vertex/global/flex` and $0.000938 unpinned.
+  prompt and image cost $0.0004766 on `google-vertex/global/flex` and $0.000938 unpinned.
 - Confirm the pin took effect by comparing reported `usage.cost` with the pinned endpoint's price:
   on nine probe calls the two agreed to the last decimal on all nine once cache reads were counted
   at the cache price.

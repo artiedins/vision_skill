@@ -200,10 +200,7 @@ def cmd_models(cfg, args):
     print("vision: status 0 is normal; a nonzero status is a provider-side health flag, not a routing failure. A pinned call can still fail on account data policy.", file=sys.stderr)
 
 
-PROBE_PROMPT = (
-    "Image 1 is a test card. Reply on one line with the large number, the colour of the square "
-    "on the left, and the shape on the right."
-)
+PROBE_PROMPT = "Image 1 is a test card. Reply on one line with the large number, the colour of the square " "on the left, and the shape on the right."
 
 
 def cmd_probe(cfg, args):
@@ -248,10 +245,7 @@ def cmd_probe(cfg, args):
         if "error" in row:
             print(f'{row["model"]:35s} {row["endpoint"]:26s} FAILED  {row["error"][:120]}')
         else:
-            print(
-                f'{row["model"]:35s} {row["endpoint"]:26s} ok  provider={row["provider"]} '
-                f'number_read={"yes" if row["read_number"] else "no"} cost={ledger.money(row["cost"])}'
-            )
+            print(f'{row["model"]:35s} {row["endpoint"]:26s} ok  provider={row["provider"]} ' f'number_read={"yes" if row["read_number"] else "no"} cost={ledger.money(row["cost"])}')
 
 
 def cmd_info(cfg, args):

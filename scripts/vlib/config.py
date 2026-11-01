@@ -21,24 +21,15 @@ class Model:
 # A tag without a region segment also matches that provider's regional siblings (for example
 # amazon-bedrock includes amazon-bedrock/us-east-1). Pass the region form to narrow it further.
 ALLOWED = [
-    Model("deepseek/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash", "morph/fp8", "cheap",
-          "Cheap bulk description, pre-filtering, rough captioning."),
-    Model("xiaomi/mimo-v2.6-pro", "MiMo V2.6 Pro", "gmicloud/bf16", "mid",
-          "Unrated here: general description, second opinion."),
-    Model("openai/gpt-6.1-sol", "GPT-6.1 Sol", "openai/flex", "mid",
-          "Landmark and object inventory with fractional boxes; reasoning is mandatory."),
-    Model("anthropic/claude-opus-5.5", "Claude Opus 5.5", "amazon-bedrock", "premium",
-          "Geometry, shadow and camera reasoning; slowest and dearest per call."),
-    Model("google/gemini-4-argon", "Gemini 4 Argon", "google-vertex/global", "premium",
-          "Strongest all-round reading; start here when the answer must be right."),
-    Model("openai/gpt-6.1-terra", "GPT-6.1 Terra", "openai/flex", "mid",
-          "Screenshot, interface and document-heavy reading."),
-    Model("google/gemini-3.8-flash", "Gemini 3.8 Flash", "google-vertex/global/flex", "cheap",
-          "Plots, tables, bulk inventory; the usual first pass."),
-    Model("x-ai/grok-4.7", "Grok 4.7", "xai/zdr", "mid",
-          "Unrated here: general description, blunt critique."),
-    Model("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro", "google-vertex/global/flex", "mid",
-          "Constrained comparison between named candidates; check its confidence numbers."),
+    Model("deepseek/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash", "morph/fp8", "cheap", "Cheap bulk description, pre-filtering, rough captioning."),
+    Model("xiaomi/mimo-v2.6-pro", "MiMo V2.6 Pro", "gmicloud/bf16", "mid", "Unrated here: general description, second opinion."),
+    Model("openai/gpt-6.1-sol", "GPT-6.1 Sol", "openai/flex", "mid", "Landmark and object inventory with fractional boxes; reasoning is mandatory."),
+    Model("anthropic/claude-opus-5.5", "Claude Opus 5.5", "amazon-bedrock", "premium", "Geometry, shadow and camera reasoning; slowest and dearest per call."),
+    Model("google/gemini-4-argon", "Gemini 4 Argon", "google-vertex/global", "premium", "Strongest all-round reading; start here when the answer must be right."),
+    Model("openai/gpt-6.1-terra", "GPT-6.1 Terra", "openai/flex", "mid", "Screenshot, interface and document-heavy reading."),
+    Model("google/gemini-3.8-flash", "Gemini 3.8 Flash", "google-vertex/global/flex", "cheap", "Plots, tables, bulk inventory; the usual first pass."),
+    Model("x-ai/grok-4.7", "Grok 4.7", "xai/zdr", "mid", "Unrated here: general description, blunt critique."),
+    Model("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro", "google-vertex/global/flex", "mid", "Constrained comparison between named candidates; check its confidence numbers."),
 ]
 BY_SLUG = {m.slug: m for m in ALLOWED}
 SHORT = {m.slug.split("/")[1]: m.slug for m in ALLOWED}

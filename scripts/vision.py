@@ -90,9 +90,12 @@ def do_call(cfg, request, quiet=False, resume=False):
     probed = [images.probe(p) for p in request.image_paths]
     for meta in probed:
         meta.pop("exif", None)
-    session = ledger.current_session(cfg)
-    if session is None:
-        session = ledger.start_session(cfg, note="automatically started by first paid request")
+    with ledger.locked(cfg):
+        # Two parallel calls may both find no session; the lock makes one start it and the other
+        # join, instead of each creating its own session id.
+        session = ledger.current_session(cfg)
+        if session is None:
+            session = ledger.start_session(cfg, note="automatically started by first paid request")
     name = runs.run_name(request.tag, payload["model"])
     meta = {
         "request_id": name,
@@ -110,14 +113,14 @@ def do_call(cfg, request, quiet=False, resume=False):
         "run_md": str(cfg.runs_dir() / f"{name}.md"),
         "run_json": str(cfg.runs_dir() / f"{name}.json"),
     }
-    pending_path = cfg.state_dir / "pending.json"
+    pending_path = ledger.pending_path(cfg, name)
     ledger.write_json(pending_path, meta)
     started = time.monotonic()
     try:
         body = client.chat(cfg, payload)
     except client.ApiError as exc:
         # Explicit request/auth rejections have no generation to retry. Ambiguous failures
-        # (timeouts, 429s, 5xx) leave pending.json behind as a record of what was in flight.
+        # (timeouts, 429s, 5xx) leave the pending marker behind as a record of what was in flight.
         if exc.status in (400, 401, 403, 404, 405, 413, 415, 422):
             pending_path.unlink()
         raise
@@ -131,10 +134,11 @@ def do_call(cfg, request, quiet=False, resume=False):
     parsed = runs.extract_json(answer) if structured else None
     meta["success"] = bool(answer.strip()) and not body.get("error") and (meta["finish_reason"] in ("stop", "end_turn")) and (not structured or parsed is not None)
     runs.write_run(cfg, name, runs.request_record(payload), body, answer, meta)
-    ledger.append(cfg, meta)
-    if meta["cost"] is not None:
-        pending_path.unlink()
-    total = ledger.totals(cfg)
+    with ledger.locked(cfg):
+        ledger.append(cfg, meta)
+        if meta["cost"] is not None:
+            pending_path.unlink()
+        total = ledger.totals(cfg)
     print(
         f'vision: model={meta["model"]} endpoint={meta["endpoint"]} provider={meta.get("provider")} '
         f'cost={ledger.money(meta["cost"])} '
@@ -143,7 +147,7 @@ def do_call(cfg, request, quiet=False, resume=False):
         file=sys.stderr,
     )
     if meta["cost"] is None:
-        # Unknown cost stays unknown; pending.json keeps the response so it can be reconciled later.
+        # Unknown cost stays unknown; the pending marker keeps the response for later reconciliation.
         print("vision: WARNING no reported cost; this call is excluded from totals until reconciled", file=sys.stderr)
     if not meta["success"]:
         raise ValueError(failure_message(meta, structured))
@@ -379,7 +383,6 @@ def batch_requests(args):
 
 def cmd_batch(cfg, args):
     requests = batch_requests(args)
-    before = ledger.totals(cfg)
     rows = []
     failed = 0
     try:
@@ -396,9 +399,10 @@ def cmd_batch(cfg, args):
                 ledger.write_json(Path(args.out), rows)
     finally:
         after = ledger.totals(cfg)
-        count = after["calls_total"] - before["calls_total"]
-        cost = after["cost_total"] - before["cost_total"]
-        print(f"vision: batch {len(rows) - failed}/{len(requests)} completed, {count} newly recorded calls; " f"reported new cost {ledger.money(cost)}", file=sys.stderr)
+        # counted from this batch's own rows, because other calls may share the state directory
+        mine = [row for row in rows if "error" not in row]
+        cost = sum(row["cost"] or 0 for row in mine)
+        print(f"vision: batch {len(mine)}/{len(requests)} completed, {len(mine)} newly recorded calls; " f"reported new cost {ledger.money(cost)}", file=sys.stderr)
         if after["pending"] or after["unknown_costs"]:
             print("vision: WARNING batch cost is incomplete; unresolved request/cost remains", file=sys.stderr)
         if args.json:
@@ -561,7 +565,9 @@ def main():
         paid = args.command in ("ask", "panel", "batch", "probe")
         if paid and not cfg.api_key:
             raise ValueError("No API key found. Populate .env from .env.example with OR_API_KEY.")
-        if paid or args.command == "start":
+        # do_call takes the lock for its own short registry updates, so paid commands may run
+        # concurrently in one state directory. Only session start needs the whole lock.
+        if args.command == "start":
             with ledger.locked(cfg):
                 args.func(cfg, args)
         else:

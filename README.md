@@ -58,13 +58,14 @@ rounds of looking.
 
 `vision_runs/` under the **current working directory** is the default state directory. It contains
 `ledger.jsonl`, `session.json`, `runs/`, caches of the model catalog and the per-model endpoint
-lists, the `probe` card and, during a request, `pending.json`. Use `--state-dir DIR` to put it
-anywhere. All cost totals cover one state directory.
+lists, the `probe` card and, during a request, one marker per request under `pending/`. Use
+`--state-dir DIR` to put it anywhere. All cost totals cover one state directory.
 
 - `start` begins a new session for cost reporting; it never resets ledger totals. A first paid
   request starts a session if none exists.
-- Paid commands and session changes acquire a POSIX file lock. No parallel requests share a state
-  directory; a second writer exits with an error.
+- The POSIX file lock covers only the short registry updates (session start, pending marker, ledger
+  append), so any number of paid calls may share one state directory at the same time. A lock held
+  for more than 60 seconds stops the call with an error.
 - Reported cost comes from each response's `usage.cost`, without per-call rounding. A
   missing/invalid cost stays unknown and is never relabelled as zero. Account usage can include
   unrelated jobs and is not the ledger's authority.
@@ -73,10 +74,11 @@ anywhere. All cost totals cover one state directory.
 ## Interrupted requests
 
 POST requests are never retried automatically. A timeout, process interruption or server error may
-follow a billed generation. The CLI writes `pending.json` **before** sending: it holds the
-request settings, ordered image paths and hashes, and the response if one arrived, without
+follow a billed generation. The CLI writes a marker under `pending/` **before** sending: it holds
+the request settings, ordered image paths and hashes, and the response if one arrived, without
 uploaded image bytes or credentials. Explicit request/auth rejection errors (e.g. HTTP 400/401)
-remove the marker; ambiguous errors leave it. The next paid request overwrites it.
+remove the marker; ambiguous errors leave it. Each request has its own marker, so parallel calls
+do not overwrite each other.
 
 A remaining marker is evidence, not a block; nothing stops further calls. To check whether an
 ambiguous call was billed, match its request ID against the ledger, or use the returned

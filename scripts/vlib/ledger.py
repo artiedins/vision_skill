@@ -22,13 +22,21 @@ def write_json(path, data):
 
 
 @contextmanager
-def locked(cfg):
+def locked(cfg, wait=60.0):
+    # Held only for the short registry updates (session, pending marker, ledger append), never for
+    # the API request itself, so many calls can share one state directory. Waiting is bounded and
+    # flock is released by the kernel if a holder dies.
     cfg.state_dir.mkdir(parents=True, exist_ok=True)
     with (cfg.state_dir / ".lock").open("a") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise ValueError("another vision command is using this state directory; wait for it")
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise ValueError(f"state directory {cfg.state_dir} stayed locked for over {wait:g}s")
+                time.sleep(0.05)
         try:
             yield
         finally:
@@ -62,10 +70,16 @@ def read(cfg):
     return records
 
 
+def pending_path(cfg, request_id):
+    # One file per in-flight request, so concurrent calls in one state directory never clobber
+    # each other's evidence.
+    return cfg.state_dir / "pending" / f"{request_id}.json"
+
+
 def pending(cfg):
-    # Record of the most recent in-flight request; evidence after an ambiguous failure, never a block.
-    path = cfg.state_dir / "pending.json"
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    # Leftover in-flight records: evidence after an ambiguous failure, never a block.
+    directory = cfg.state_dir / "pending"
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(directory.glob("*.json"))] if directory.is_dir() else []
 
 
 def start_session(cfg, note=""):

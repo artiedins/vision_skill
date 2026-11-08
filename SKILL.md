@@ -20,6 +20,10 @@ several rounds, read [references/workflow.md](references/workflow.md).
 ## Setup
 
 Examples assume the CLI at `skills/vision_skill/scripts/vision.py`; adjust if it lives elsewhere.
+Inside the `pq_agent` sandbox the same file is at `/agent/skills/vision_skill/scripts/vision.py`, and
+that absolute path is what to use when the working directory is some other project: `/agent` is the
+read-only harness, `/workspace` is the project. A `.env` in the project root is found from either
+path.
 Where the agent puts state, prepared images and results is its choice; the default
 state directory is `vision_runs/` under the current working directory, and `--state-dir` points it
 anywhere else. All cost totals cover one state directory. Global options (`--state-dir`,
@@ -127,6 +131,33 @@ python3 skills/vision_skill/scripts/vision.py prep photo.jpg --out vision_runs/d
   colour profile to sRGB, flatten transparency onto white, strip metadata and encode PNG for the
   request. Multipage/animated inputs require explicit extraction first. There is no automatic
   downsizing at upload time, so prepare oversized images first.
+
+### Screenshots from the browser
+
+A browser screenshot is an image like any other, and it is the right input when a chart, map,
+product photo or challenge page has to be understood rather than read as text. In `pq_agent` mode 1
+the browser tool saves one:
+
+```js
+// inside browser_execute - the path lands under /tmp/pq_browse_files, which this skill can read
+const shot = files.path("product.png");
+await page.screenshot({ path: shot });
+return shot;
+```
+
+`screenshotWithLabels({ path: files.path("labelled.png") })` writes the same screenshot with clickable
+element labels drawn on it, which is the cheaper way to ask "which control do I press". Both return
+an absolute path; pass it to `ask --image` in the next `bash` call. Screenshots are evidence of what
+the page looked like at that moment, not of what it contains: confirm a price or a name against the
+DOM when the answer matters.
+
+A capture of a tab that is not in front came back as a single flat color on this host (2026-11-08):
+the page background, no text or images, while a plain Playwright CDP screenshot of the same page
+was correct. The cause was browse 0.0.14, which asked a hidden tab for a screenshot without the
+follow-up capture that releases the pending one. browse 0.0.15 sends the follow-up and the image is
+complete, verified with the screen locked and the monitor off, so neither has to be changed before
+asking for a screenshot. If an image is one flat color now, check `browse --version` reports 0.0.15
+or later, and read the page as text instead of retrying.
 
 ## Ask and compare
 

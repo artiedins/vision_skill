@@ -72,7 +72,9 @@ def find_env_file(explicit=None):
         if not path.is_file():
             raise ValueError(f"explicit .env file does not exist: {path}")
         return path
-    return next((p for p in (Path.cwd() / ".env", SKILL_ROOT / ".env") if p.is_file()), None)
+    # /workspace is the project root inside run_agent.sh, so a key placed there
+    # is found from any subdirectory the agent happens to be working in
+    return next((p for p in (Path.cwd() / ".env", Path("/workspace/.env"), SKILL_ROOT / ".env") if p.is_file()), None)
 
 
 @dataclass

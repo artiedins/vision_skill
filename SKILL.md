@@ -19,10 +19,10 @@ several rounds, read [references/workflow.md](references/workflow.md).
 
 ## Setup
 
-Examples assume the CLI at `skills/vision_skill/scripts/vision.py`; adjust if it lives elsewhere.
-Inside the `pq_agent` sandbox the same file is at `/agent/skills/vision_skill/scripts/vision.py`, and
-that absolute path is what to use when the working directory is some other project: `/agent` is the
-read-only harness, `/workspace` is the project. A `.env` in the project root is found from either
+Examples assume the CLI at `skills/vision_skill/scripts/vision.py`, which is where it lives in the
+project that owns it. Inside the `pq_agent` sandbox the same file is at
+`/workspace/skills/vision_skill/scripts/vision.py`; the harness at `/agent` does not carry the
+skill, so that project path is the one to use. A `.env` in the project root is found from either
 path.
 Where the agent puts state, prepared images and results is its choice; the default
 state directory is `vision_runs/` under the current working directory, and `--state-dir` points it
@@ -36,6 +36,13 @@ python3 skills/vision_skill/scripts/vision.py status
 Credentials come from `OR_API_KEY` (inference) and optional `OR_MGMNT_KEY` (account reads) in a
 `.env` in the working directory or the skill directory, otherwise from environment variables of
 the same names. `status` reports which were found and reads account credit totals.
+
+### The `look` tool in the harnesses
+
+Both harnesses that can use this skill offer `look(image, question, model?)`, which runs `ask` with
+the first-pass model and returns the answer text. It is the shortest path for one question about one
+image, including a screenshot saved from `browser_execute`. Go to the CLI directly for everything
+else: `prep` and crops, `panel` and `batch`, `cost` and `spend`, or any call needing flags.
 
 ### Conventions this skill assumes
 

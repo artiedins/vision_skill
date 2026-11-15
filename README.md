@@ -1,24 +1,21 @@
 # Vision skill
 
-A stand-alone skill for image understanding through nine allowed OpenRouter models. Each model is
-pinned to one provider endpoint, and every request sets `provider.only` with
-`allow_fallbacks: false`, so a call either reaches the pinned endpoint or fails loudly. It includes
-agent instructions, a Python CLI, local crop/resize helpers, saved responses and cost records.
-It supports varied vision tasks rather than one application. It does not generate images or send
-native video; sample video frames first.
+A stand-alone skill for image understanding and multi-turn visual conversation across sixteen allowed
+OpenRouter models. Each model is pinned to one provider endpoint (`provider.only` with
+`allow_fallbacks: false`), so every call either reaches its pinned endpoint or fails loudly. It
+includes agent instructions, a Python CLI, multi-turn conversation threads, local crop/resize
+helpers, and per-call cost records. It does not generate images or send native video; sample video
+frames first.
 
 ## Credentials
 
-The user fills `OR_API_KEY` with an inference key from
-[OpenRouter key settings](https://openrouter.ai/settings/keys). Optional `OR_MGMNT_KEY` is used
-only to read account credit totals when no inference key is supplied; the tool never creates,
-edits or deletes account keys.
+Populate `OR_API_KEY` with an inference key from
+[OpenRouter key settings](https://openrouter.ai/settings/keys). Optional `OR_MGMNT_KEY` reads
+account-level credit and daily usage when needed; the tool never creates, edits, or deletes keys.
 
-The CLI reads a `.env` in the current working directory, then a `.env` in the skill directory, and
-falls back to environment variables of the same names, `OR_API_KEY` and `OR_MGMNT_KEY`.
-`--env-file` selects an explicit file instead; a selected missing file is an error. The parser
-supports quoted values, comments and optional `export`; it never evaluates shell expressions or
-expands variables.
+The CLI checks `.env` in the current working directory, the owning project root (when installed at
+`<project>/skills/vision_skill`), `/workspace/.env`, and the skill directory, falling back to
+environment variables `OR_API_KEY` and `OR_MGMNT_KEY`. `--env-file` selects an explicit file.
 
 Pillow is required. `rawpy` (camera raw), `pillow-heif` (HEIC) and `ffmpeg` (video frames) are
 optional extensions used only when their input formats appear.
@@ -28,75 +25,51 @@ optional extensions used only when their input formats appear.
 ```sh
 python3 skills/vision_skill/scripts/vision.py status
 python3 skills/vision_skill/scripts/vision.py models
-python3 skills/vision_skill/scripts/vision.py start --note "image comparison"
-python3 skills/vision_skill/scripts/vision.py prep photo.jpg --out vision_runs/prepared
-python3 skills/vision_skill/scripts/vision.py ask --model google/gemini-3.8-flash \
-  --image vision_runs/prepared/photo_full_1568.jpg \
+python3 skills/vision_skill/scripts/vision.py prep photo.jpg
+python3 skills/vision_skill/scripts/vision.py ask --thread inspect --model openai/gpt-6.1-terra \
+  --effort low --max-tokens 2000 --image photo.jpg \
   --prompt "Describe the visible objects and note anything uncertain."
+python3 skills/vision_skill/scripts/vision.py ask --thread inspect \
+  --prompt "Give fractional bounding boxes for the two objects on the right."
 python3 skills/vision_skill/scripts/vision.py cost
 ```
 
-Defaults are high reasoning effort and 4,000 output tokens, including reasoning. Commands:
-`status`, `models`, `probe`, `info`, `prep`, `ask`, `panel`, `batch`, `start`, `cost`, `spend`.
-`models` shows each pinned endpoint, whether it is still offered and its price; `probe` makes one
-tiny paid call per model to prove the pinned endpoint serves this account (about $0.01 for all
-nine at low effort).
-`python3 skills/vision_skill/scripts/vision.py COMMAND --help` lists options; adjust the path if
-the skill lives elsewhere. Global flags go before the command.
-
-`cost` totals the calls recorded in the local ledger. `spend` reads OpenRouter's account activity,
-by day and account-wide (so it includes jobs this ledger never made), and prints the remaining
-credit; it needs `OR_MGMNT_KEY`. Workspace conventions (state directory, spend policy, credentials
-path) are at the end of [SKILL.md](SKILL.md).
+Commands: `status`, `models`, `probe`, `info`, `prep`, `ask`, `panel`, `threads`, `batch`, `start`,
+`cost`, `spend`. Global flags (`--state-dir`, `--env-file`, `--timeout`) go before the command.
 
 For an agent, start with [SKILL.md](SKILL.md). See [recipes](references/recipes.md) for object
-localisation, colour/design, OCR, correspondences, image-quality assessment, plot analysis and
-candidate elimination, and [workflow](references/workflow.md) for questions that need several
-rounds of looking.
+localisation, colour/design, OCR, correspondences, quality triage, plot analysis and candidate
+elimination, and [workflow](references/workflow.md) for multi-round investigations.
 
-## State
+## Scratch state (no workspace clutter)
 
-`vision_runs/` under the **current working directory** is the default state directory. It contains
-`ledger.jsonl`, `session.json`, `runs/`, caches of the model catalog and the per-model endpoint
-lists, the `probe` card and, during a request, one marker per request under `pending/`. Use
-`--state-dir DIR` to put it anywhere. All cost totals cover one state directory.
+By default, state lives outside project directories at `/tmp/pq_scratch/vision` (fallback:
+`<tempdir>/vision_skill_<uid>`), overridable via `VISION_STATE_DIR` or `--state-dir DIR`. It holds
+`ledger.jsonl`, `session.json`, `runs/`, `threads/`, `prepared/`, 6-hour catalog/endpoint caches,
+and `pending/` markers for in-flight requests. Durable conclusions belong in the project's normal
+notes and deliverables rather than `vision_runs/` folders inside workspaces.
 
-- `start` begins a new session for cost reporting; it never resets ledger totals. A first paid
-  request starts a session if none exists.
-- The POSIX file lock covers only the short registry updates (session start, pending marker, ledger
-  append), so any number of paid calls may share one state directory at the same time. A lock held
-  for more than 60 seconds stops the call with an error.
-- Reported cost comes from each response's `usage.cost`, without per-call rounding. A
-  missing/invalid cost stays unknown and is never relabelled as zero. Account usage can include
-  unrelated jobs and is not the ledger's authority.
-- The `cost` command is local and does not require a management key.
+- Paths inside `ledger.jsonl` and thread files are stored portably relative to `state_dir` or `cwd`
+  when inside them.
+- `ask --thread NAME` (and `ask --continue`) saves multi-turn conversation history and snapshots each
+  turn's normalized images under `threads/<name>_media/`, so reusing a screenshot filename such as
+  `/tmp/pq_browse_files/shot.png` on a later turn never corrupts earlier turns.
+- `threads list`, `threads show <name>`, and `threads clear <name>|--all` inspect or reset threads.
+- Reported cost comes from each response's `usage.cost`. `cost` totals the local ledger without
+  requiring a management key; `spend` reads account-wide daily usage from OpenRouter.
 
 ## Interrupted requests
 
-POST requests are never retried automatically. A timeout, process interruption or server error may
-follow a billed generation. The CLI writes a marker under `pending/` **before** sending: it holds
-the request settings, ordered image paths and hashes, and the response if one arrived, without
-uploaded image bytes or credentials. Explicit request/auth rejection errors (e.g. HTTP 400/401)
-remove the marker; ambiguous errors leave it. Each request has its own marker, so parallel calls
-do not overwrite each other.
-
-A remaining marker is evidence, not a block; nothing stops further calls. To check whether an
-ambiguous call was billed, match its request ID against the ledger, or use the returned
-generation ID or the account activity around the recorded time. If it was charged, record that
-cost in the ledger rather than adding a duplicate record. `cost` reports any pending marker or
-unknown cost as incomplete totals.
+POST requests are never retried automatically. A marker under `pending/` is written before sending
+and removed on explicit 4xx rejection or once billed cost is recorded; leftover markers after a
+timeout or 5xx remain as evidence without blocking subsequent calls.
 
 ## Privacy and image behaviour
 
-Uploads apply EXIF orientation, convert embedded colour profiles to sRGB, flatten transparency
-onto white, strip metadata and send PNG bytes. `prep` writes new JPEG derivatives and refuses
-existing targets. Use a PNG directly or a lossless crop for tiny text and exact pixel analysis.
-A manifest records crop coordinates and transforms when requested. The 1568/2048 presets are
-starting sizes, not claims about every model's native image resolution.
+Uploads apply EXIF orientation, convert embedded colour profiles to sRGB, flatten transparency onto
+white, strip metadata, re-encode JPEGs (`quality=92`), and send PNG/WebP/still GIF inputs losslessly
+as PNG. `prep` writes JPEG derivatives and refuses overwrites. Metadata stripping is not visual
+redaction.
 
-Metadata stripping is not visual redaction. Local transcripts contain prompts, file paths,
-responses and request settings, but no credentials or uploaded image bytes.
-
-No tests, test images, credentials or personal data ship with the skill. The code is under
-[Apache-2.0](LICENSE). The copyright line in that file is still the template placeholder; fill it in
-before publishing.
+No tests, test images, credentials or personal data ship with the skill. Licensed under
+[Apache-2.0](LICENSE).

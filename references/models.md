@@ -3,10 +3,11 @@
 The allow-list and its pinned endpoints live in `scripts/vlib/config.py`. Each model has exactly
 one endpoint tag, and every request sets `provider.only` to that tag with `allow_fallbacks: false`,
 so a call either reaches that endpoint or fails. `models` prints the pin, whether it is still in
-OpenRouter's live endpoint list, that endpoint's health status and its per-million-token prices;
+OpenRouter's live endpoint list, that endpoint's `health` status (`0` is normal; nonzero is a
+provider-side status flag rather than a routing block), and its live per-million-token prices;
 `models --refresh` skips the six-hour cache.
 
-## How endpoint pinning behaves
+## How endpoint pinning and pricing behave
 
 - A pin that does not exist produces HTTP 404 naming the providers that do serve the model, for
   example `your request's provider.only preference permits only: nonexistent-provider`. That is the
@@ -21,26 +22,31 @@ OpenRouter's live endpoint list, that endpoint's health status and its per-milli
 - `service_tier` endpoints (`flex`, `priority`) are separate targets and are usually priced
   differently from their standard sibling. The pin decides the price: the same Gemini 3.8 Flash
   prompt and image cost $0.0004766 on `google-vertex/global/flex` and $0.000938 unpinned.
-- Confirm the pin took effect by comparing reported `usage.cost` with the pinned endpoint's price:
-  on nine probe calls the two agreed to the last decimal on all nine once cache reads were counted
-  at the cache price.
+- **Static vs floating endpoint prices:** Direct provider pins (`openai/flex`, `google-vertex/*`,
+  `amazon-bedrock`, `xai/zdr`) keep fixed rate-card prices until a provider changes its tariff,
+  whereas marketplace inference pins such as `morph/fp8` (`deepseek-v4.1-flash-1017`, `kimi-k3.1-pro`)
+  and `gmicloud/*` adjust per-million-token rates intraday (for example `morph/fp8` moved from
+  `0.089 / 0.50` to `0.072 / 0.641` on DeepSeek V4.1 Flash and `0.692 / 8.82` to `0.721 / 10.809`
+  on Kimi K3.1 Pro on 2026-11-15). Treat the table below as a dated snapshot, `models --refresh` as
+  the live catalog rate, and each response's `usage.cost` in the ledger as the billed authority.
 
-## The sixteen models, as of 2026-11-15
+## The sixteen models, snapshot 2026-11-15
 
-Prices are the pinned endpoint's catalog price per million tokens, in and out, verified via
-`models --refresh` and paid `probe` across all sixteen pins (`$0.0217` total). On this account,
+Prices below are the pinned endpoint's catalog price per million tokens (in / out) recorded during
+the 2026-11-15 scratch benchmark and full 16-model paid `probe` (`$0.0217` total, run in isolated
+`/tmp/pq_scratch` state rather than inside any project workspace). On this account,
 `anthropic/claude-fable-5.2` is pinned to `google-vertex/global` because `amazon-bedrock` is
 BYOK-only for Fable 5.2.
 
-| model | pinned endpoint | $/Mtok | starting use |
+| model | pinned endpoint | $/Mtok (snapshot) | starting use |
 | --- | --- | --- | --- |
 | `openai/gpt-6-luna` | `openai/flex` | 0.05 / 0.25 | ultra-cheap bulk passes; accurate plot numbers and 0.967 UI button IoU at ~$0.00012/call |
 | `z-ai/glm-5.3-flash` | `gmicloud/fp8` | 0.075 / 0.25 | ultra-cheap open-weight pass (~$0.00012/call); fast prose and plot checks, looser boxes (0.841 IoU) |
-| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | 0.089 / 0.5 | cheap bulk description; reasoning ate a 2500-token cap on a real photo and returned nothing |
+| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | ~0.07-0.09 / 0.50-0.64 (live) | cheap bulk description; reasoning ate a 2500-token cap on a real photo and returned nothing |
 | `google/gemini-3.8-flash` | `google-vertex/global/flex` | 0.375 / 1.875 | bulk passes: plots, tables, first-pass inventory (~$0.0006/call; flex latency can spike) |
 | `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | 0.326 / 0.652 | captioning only: boxes failed the card test, exhausted 2500 tokens on a photo, and stalled 293s on probe |
 | `openai/gpt-6.1-terra` | `openai/flex` | 0.5 / 2.5 | default general `look` work (~$0.0011/call): BenchLM 77.4, exact coordinates (0.982-0.99 IoU), low reasoning overhead |
-| `moonshotai/kimi-k3.1-pro` | `morph/fp8` | 0.692 / 8.82 | strongest open-weight multimodal reader (BenchLM 72.4, 0.982 UI IoU) for cross-family comparison |
+| `moonshotai/kimi-k3.1-pro` | `morph/fp8` | ~0.69-0.72 / 8.82-10.81 (live) | strongest open-weight multimodal reader (BenchLM 72.4, 0.982 UI IoU) for cross-family comparison |
 | `openai/gpt-6.1-sol` | `openai/flex` | 1 / 5 | dense inventory, localisation (0.982-0.99 IoU), and chart analytics (Plotly 43/43); reasoning is mandatory |
 | `google/gemini-3.1-pro-preview` | `google-vertex/global/flex` | 1 / 6 | constrained comparison between named candidates |
 | `google/gemini-4-hydrogen` | `google-vertex/global` | 1.5 / 7.5 | fast Gemini 4 reader (Chartography 66.6%, Plotly 43/43, AA Index 54 Xhigh / 51 High / 41 Med; no Vertex flex pin yet) |
@@ -122,40 +128,31 @@ What it supports:
   `finish_reason: length`, fully charged. On the card that cap still left DeepSeek answering, using
   1053 reasoning tokens. Sol needed 51 reasoning tokens for the photograph, Terra 45, Opus 267, Grok
   1401.
-- **Every model that gave a compass heading was wrong**, including Opus 5.5, the dearest model on the
-  list: it said 20 (hedged as low confidence), Gemini 4 Argon 340, Gemini 3.8 Flash 30, against a
-  camera facing about 270. The four that refused (Sol, Terra, Grok, Gemini 3.1 Pro) were right to refuse.
-  A heading question with no north reference in the frame produces confident numbers, so supply the
-  sun position or a known bearing in the prompt.
+- **Every model that gave a compass heading was wrong**, including Opus 5.5: it said 20 (hedged as
+  low confidence), Gemini 4 Argon 340, Gemini 3.8 Flash 30, against a camera facing about 270. The
+  four that refused (Sol, Terra, Grok, Gemini 3.1 Pro) were right to refuse. Supply the sun position
+  or a known bearing in the prompt.
 - **Light direction is the least reliable prose claim.** Two of seven reversed it: Argon put the sun
   behind-right with shadows left, Flash front-right with shadows left, and the photograph runs the
   other way. Shadow centroids can be measured from pixels, which is what settled the heading in the
   geolocation task.
 - **Granularity is not discrimination.** Sol returned the longest inventory, 46 roof centres at three
   decimal places, and never flagged the orange bands on the building at (0.54, 0.56) that the whole
-  matching test rested on. Argon, Opus, Flash and Grok named that band; Terra, Sol and Gemini 3.1 Pro
-  located the building but not the feature. Ask for the feature you intend to match on.
-- **Coordinates several vendors repeat are probably real.** Flowers at (0.10-0.13, 0.88-0.91), the
-  orange band at (0.54, 0.55) and the haze at x 0.75-1.00, y 0.33-0.38 came back nearly identical from
-  independent families and match the pixels. The left ridge centre was repeated too and was still off
-  by 0.05-0.1, so repetition narrows a coordinate without guaranteeing it.
+  matching test rested on. Ask for the feature you intend to match on.
+- **Coordinates several vendors repeat are probably real.** Repetition narrows a coordinate without
+  guaranteeing it.
 - **The pins held.** Each call reported the provider its pin names (Morph, GMICloud, OpenAI, Amazon
-  Bedrock, Google, xAI), so this panel doubles as a second end-to-end check of the routing.
-
-Earlier evidence from the geolocation project that neither test reproduces: open-weight and mid-tier
-models spend most of their output on reasoning and truncate when the allowance is small; prose answers
-with shading or lighting arguments were the ones that failed an independent pixel check, while
-numeric claims could be checked and mostly survived; confidence percentages were uncalibrated in both
-directions.
+  Bedrock, Google, xAI).
 
 ### Test 3: matplotlib plot defects and UI checkout card (2026-11-15)
 
-Nine value-frontier models were tested at `--effort low --max-tokens 1600` (`$0.0413` total across
-18 calls) on two 2026-11-15 synthetic targets: (A) a 1200x750 matplotlib validation plot containing
-two exact series values (`peak=87.4%`, `ep30_base=80.4%`), a label straddling both the `y=85.0%`
-dashed threshold line and the `Hydrogen-LoRA` curve, and a batch-size note sitting directly on the
-bottom x-axis spine; and (B) a 1280x800 checkout UI screenshot (`#INV-9042`, `$42.50`, disabled wire
-button, and primary green pay button at `[0.6562, 0.3375, 0.9297, 0.4175]`).
+Nine value-frontier models were tested in `/tmp/pq_scratch` at `--effort low --max-tokens 1600`
+(`$0.0413` total across 18 calls) on two 2026-11-15 synthetic targets: (A) a 1200x750 matplotlib
+validation plot containing two exact series values (`peak=87.4%`, `ep30_base=80.4%`), a label
+straddling both the `y=85.0%` dashed threshold line and the `Hydrogen-LoRA` curve, and a batch-size
+note sitting directly on the bottom x-axis spine; and (B) a 1280x800 checkout UI screenshot
+(`#INV-9042`, `$42.50`, disabled wire button, and primary green pay button at
+`[0.6562, 0.3375, 0.9297, 0.4175]`).
 
 | model | plot cost | plot sec | plot rtok | plot defects caught | UI cost | UI sec | UI IoU |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -171,23 +168,22 @@ button, and primary green pay button at `[0.6562, 0.3375, 0.9297, 0.4175]`).
 
 All nine models read `87.4%`, `80.4%`, `#INV-9042`, and `$42.50` accurately. `gpt-6.1-terra`
 (`~$0.0011/call`) combined exact coordinates (`0.982` IoU), low reasoning overhead, and strong
-general multimodal ranking (BenchLM `77.4`), making it the strongest default for single-call `look`
-use at `--effort low`. `gpt-6-luna` (`~$0.00012/call`) delivered 9x cheaper bulk checks with `0.967`
-IoU. In the `$1.50-$2.00` input bracket, `gemini-4-hydrogen` (`2.5-3.6s`) is fast on standard Vertex
-for chart-heavy work, `claude-sonnet-5.5` (`1.7-2.3s`) leads UI speed and subtle overlap detection,
-and `gemini-4-carbon` matches `gemini-4-argon` on price while leading it by 10 points on Artificial
+general multimodal ranking (BenchLM `77.4`), making it the strongest default for `look` calls at
+`--effort low`. `gpt-6-luna` (`~$0.00012/call`) delivered 9x cheaper bulk checks with `0.967` IoU.
+In the `$1.50-$2.00` input bracket, `gemini-4-hydrogen` (`2.5-3.6s`) is fast on standard Vertex for
+chart-heavy work, `claude-sonnet-5.5` (`1.7-2.3s`) leads UI speed and subtle overlap detection, and
+`gemini-4-carbon` matches `gemini-4-argon` on price while leading it by 10 points on Artificial
 Analysis Intelligence Index (`60` vs `50`).
 
 ## Choosing when the task matters
 
 Use one cheap strong model first (`gpt-6.1-terra` for general UI/plot/coordinate checks,
-`gemini-3.8-flash` or `gpt-6-luna` for bulk sweeps), read its answer, then buy a second opinion
+`gemini-3.8-flash` or `gpt-6-luna` for bulk sweeps), read its answer, follow up in the same
+`--thread` if a crop or sharper question can settle it, and bring in a second opinion
 (`gemini-4-hydrogen` or `gpt-6.1-sol` on charts, `claude-sonnet-5.5` on dense UI, `gemini-4-carbon`,
-`claude-opus-5.5`, or `claude-fable-5.2` on hard scenes) only if the answer turns on something you
-cannot verify yourself. Spend the expensive models on the question that decides the outcome, not on
-a broad sweep: in the worked geolocation task the decisive comparison cost $0.09 on Gemini 3.1 Pro,
-while $0.96 on the most expensive model produced a fine description and no discriminating claim.
+`claude-opus-5.5`, or `claude-fable-5.2` on hard scenes) when the decision turns on an ambiguity you
+cannot measure directly in pixels.
 
 Reasoning effort moves cost more than model choice does. `low` is enough for inventory and reading;
-reserve `high` for geometry, and give it 6000 or more output tokens so the reasoning does not eat
-the answer.
+reserve `high` for geometry, and give it 6000 or more output tokens so reasoning does not eat the
+answer.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -20,6 +21,9 @@ class Request:
     schema: dict = None
     tag: str = ""
     json_mode: bool = False
+    history: list = field(default_factory=list)
+    thread: str = ""
+    turn_number: int = 0
 
 
 def check_model(name):
@@ -52,11 +56,21 @@ def make_payload(request):
     prompt = request.prompt
     if request.json_mode and not request.schema:
         prompt += runs.JSON_INSTRUCTION
-    return client.build_payload(slug, endpoint_of(slug), prompt, request.image_paths, system=request.system, effort=request.effort, max_tokens=request.max_tokens, schema=request.schema)
+    return client.build_payload(
+        slug,
+        endpoint_of(slug),
+        prompt,
+        request.image_paths,
+        system=request.system,
+        effort=request.effort,
+        max_tokens=request.max_tokens,
+        schema=request.schema,
+        history=request.history,
+    )
 
 
-def saved_result(record):
-    path = Path(record["run_json"])
+def saved_result(cfg, record):
+    path = runs.resolve_saved_path(record["run_json"], cfg)
     if not path.is_file():
         raise ValueError(f"completed request has a missing transcript: {path}; not spending again")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -79,6 +93,13 @@ def failure_message(meta, structured):
     return f"answer incomplete or refused ({', '.join(parts)}); saved and charged, not marked complete"
 
 
+def prompt_text_of(payload):
+    last_content = payload["messages"][-1]["content"]
+    if isinstance(last_content, str):
+        return last_content
+    return next((item.get("text", "") for item in last_content if item.get("type") == "text"), "")
+
+
 def do_call(cfg, request, quiet=False, resume=False):
     payload = make_payload(request)
     fingerprint = runs.fingerprint(payload)
@@ -86,17 +107,19 @@ def do_call(cfg, request, quiet=False, resume=False):
         previous = next((r for r in reversed(ledger.read(cfg)) if r.get("fingerprint") == fingerprint and r.get("success")), None)
         if previous:
             print(f"vision: skip {request.tag} (identical successful request)", file=sys.stderr)
-            return saved_result(previous)
+            return saved_result(cfg, previous)
     probed = [images.probe(p) for p in request.image_paths]
-    for meta in probed:
-        meta.pop("exif", None)
+    for meta_item in probed:
+        meta_item.pop("exif", None)
     with ledger.locked(cfg):
         # Two parallel calls may both find no session; the lock makes one start it and the other
         # join, instead of each creating its own session id.
         session = ledger.current_session(cfg)
         if session is None:
             session = ledger.start_session(cfg, note="automatically started by first paid request")
-    name = runs.run_name(request.tag, payload["model"])
+    name = runs.run_name(request.tag or request.thread, payload["model"])
+    run_md_abs = cfg.runs_dir() / f"{name}.md"
+    run_json_abs = cfg.runs_dir() / f"{name}.json"
     meta = {
         "request_id": name,
         "fingerprint": fingerprint,
@@ -106,14 +129,19 @@ def do_call(cfg, request, quiet=False, resume=False):
         "endpoint": payload["provider"]["only"][0],
         "effort": request.effort,
         "max_tokens": request.max_tokens,
-        "prompt": payload["messages"][-1]["content"][0]["text"],
-        "image_paths": [str(Path(p).resolve()) for p in request.image_paths],
-        "ephemeral_inputs": [str(Path(p).resolve()) for p in request.image_paths if Path(p).resolve().is_relative_to(Path("/tmp"))],
+        "prompt": prompt_text_of(payload),
+        "image_paths": [runs.portable_path(p, cfg) for p in request.image_paths],
+        "ephemeral_inputs": [runs.portable_path(p, cfg) for p in request.image_paths if Path(p).resolve().is_relative_to(Path("/tmp"))],
         "images": probed,
         "when": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "run_md": str(cfg.runs_dir() / f"{name}.md"),
-        "run_json": str(cfg.runs_dir() / f"{name}.json"),
+        "run_md": runs.portable_path(run_md_abs, cfg),
+        "run_json": runs.portable_path(run_json_abs, cfg),
     }
+    if request.thread:
+        meta["thread"] = request.thread
+        meta["turn"] = request.turn_number
+    if os.environ.get("PQ_VISION_RUN_ID"):
+        meta["harness_run"] = os.environ["PQ_VISION_RUN_ID"]
     pending_path = ledger.pending_path(cfg, name)
     ledger.write_json(pending_path, meta)
     started = time.monotonic()
@@ -140,11 +168,12 @@ def do_call(cfg, request, quiet=False, resume=False):
         if meta["cost"] is not None:
             pending_path.unlink()
         total = ledger.totals(cfg)
+    thread_tag = f' thread={request.thread}#{request.turn_number}' if request.thread else ""
     print(
-        f'vision: model={meta["model"]} endpoint={meta["endpoint"]} provider={meta.get("provider")} '
+        f'vision: model={meta["model"]} endpoint={meta["endpoint"]} provider={meta.get("provider")}{thread_tag} '
         f'cost={ledger.money(meta["cost"])} '
-        f'session={ledger.money(total["cost_session"])} project={ledger.money(total["cost_total"])} '
-        f'finish={meta["finish_reason"]} run={meta["run_md"]}',
+        f'session={ledger.money(total["cost_session"])} total={ledger.money(total["cost_total"])} '
+        f'finish={meta["finish_reason"]} run={run_md_abs}',
         file=sys.stderr,
     )
     if meta["cost"] is None:
@@ -191,18 +220,22 @@ def cmd_models(cfg, args):
     if args.json:
         print(json.dumps(rows, indent=2))
         return
-    print(f'{"slug":35s} {"pinned endpoint":26s} {"st":>3s} {"in $/Mtok":>9s} {"out $/Mtok":>10s} img')
+    print(f'{"slug":35s} {"pinned endpoint":26s} {"health":>6s} {"in $/Mtok":>9s} {"out $/Mtok":>10s} img')
     for row in rows:
         flag = "" if row["endpoint_listed"] else "  <- PIN NOT LISTED"
         print(
-            f'{row["slug"]:35s} {row["endpoint"]:26s} {str(row["endpoint_status"]):>3s} '
+            f'{row["slug"]:35s} {row["endpoint"]:26s} {str(row["endpoint_status"]):>6s} '
             f'{str(row["prompt_per_mtok"]):>9s} {str(row["completion_per_mtok"]):>10s} '
             f'{"yes" if row["image_input"] else "no"}{flag}'
         )
     missing = [row["slug"] for row in rows if not row["endpoint_listed"]]
     if missing:
         print("vision: WARNING pinned endpoint not in the live list for: " + ", ".join(missing), file=sys.stderr)
-    print("vision: status 0 is normal; a nonzero status is a provider-side health flag, not a routing failure. A pinned call can still fail on account data policy.", file=sys.stderr)
+    print(
+        "vision: health 0 is normal; nonzero is a provider-side status flag, not a routing block. "
+        "Marketplace endpoint prices float live; billed spend comes from usage.cost.",
+        file=sys.stderr,
+    )
 
 
 PROBE_PROMPT = "Image 1 is a test card. Reply on one line with the large number, the colour of the square " "on the left, and the shape on the right."
@@ -236,7 +269,7 @@ def cmd_probe(cfg, args):
                     "cost": result["meta"]["cost"],
                     "read_number": "42" in answer,
                     "answer": answer,
-                    "run": result["meta"]["run_md"],
+                    "run": str(runs.resolve_saved_path(result["meta"]["run_md"], cfg)),
                 }
             )
         except (ValueError, client.ApiError) as exc:
@@ -259,9 +292,10 @@ def cmd_info(cfg, args):
 
 def cmd_prep(cfg, args):
     variants = images.variant_list(args.preset, box=args.box, long_edge=args.long_edge, scale=args.scale, contrast=args.contrast, sharpen=args.sharpen, quality=args.quality, name=args.name)
+    out_dir = Path(args.out) if args.out else (cfg.prepared_dir() / runs.run_name("prep", "img"))
     results = []
     for src in args.images:
-        results.extend(images.prepare(src, args.out, variants, max_long_edge=args.max_long_edge, prefix=args.prefix))
+        results.extend(images.prepare(src, out_dir, variants, max_long_edge=args.max_long_edge, prefix=args.prefix))
     if args.manifest:
         path = Path(args.manifest)
         if path.exists() or path.resolve() in [Path(p).resolve() for p in args.images]:
@@ -274,25 +308,123 @@ def cmd_prep(cfg, args):
             print(f'{item["path"]}  {item["width"]}x{item["height"]}  {item["kilobytes"]} KB')
 
 
-def request_from_args(args, model, prompt):
+def request_from_args(args, model, prompt, system=None, effort=None, history=None, thread="", turn_number=0):
     return Request(
         model=model,
         prompt=prompt,
         image_paths=args.image,
-        system=args.system,
-        effort=args.effort,
+        system=args.system if system is None else system,
+        effort=(args.effort or "high") if effort is None else effort,
         max_tokens=args.max_tokens,
         schema=runs.schema_from_file(args.schema) if args.schema else None,
         tag=args.tag or "",
         json_mode=args.json,
+        history=history or [],
+        thread=thread,
+        turn_number=turn_number,
     )
 
 
+def resolve_ask_thread(cfg, args):
+    if args.reset_thread and not args.thread:
+        raise ValueError("--reset-thread requires --thread <name>")
+    if args.continue_last:
+        name = runs.last_thread_name(cfg)
+        if not name:
+            raise ValueError("no previous thread in this state directory; start one with --thread <name>")
+        existing = runs.load_thread(cfg, name)
+        if existing is None:
+            raise ValueError(f"last thread {name!r} is no longer on disk; start a new one with --thread <name>")
+        return name, existing
+    if not args.thread:
+        return "", None
+    name = args.thread.strip()
+    runs.thread_key(name)
+    if args.reset_thread:
+        with ledger.locked(cfg):
+            runs.clear_threads(cfg, name=name)
+        return name, None
+    return name, runs.load_thread(cfg, name)
+
+
 def cmd_ask(cfg, args):
-    do_call(cfg, request_from_args(args, args.model, read_prompt(args)), quiet=args.quiet)
+    prompt = read_prompt(args)
+    thread_name, existing = resolve_ask_thread(cfg, args)
+    if args.model:
+        model = check_model(args.model)
+    elif existing and existing.get("model"):
+        model = check_model(existing["model"])
+    else:
+        raise ValueError("--model is required when starting a standalone call or a new --thread (existing threads reuse their last model when --model is omitted)")
+    system = args.system if args.system is not None else (existing.get("system") if existing else None)
+    effort = args.effort if args.effort is not None else (existing.get("effort") if existing else "high")
+    history = runs.thread_history(cfg, existing) if existing else []
+    turn_number = (len(existing.get("turns") or []) + 1) if existing else (1 if thread_name else 0)
+    request = request_from_args(args, model, prompt, system=system, effort=effort, history=history, thread=thread_name, turn_number=turn_number)
+    result = do_call(cfg, request, quiet=args.quiet)
+    if thread_name and result["meta"].get("success"):
+        with ledger.locked(cfg):
+            runs.append_thread_turn(
+                cfg,
+                thread_name,
+                model=model,
+                system=system,
+                effort=effort,
+                user_text=request.prompt,
+                image_paths=request.image_paths,
+                assistant_text=result["answer"],
+                meta=result["meta"],
+            )
 
 
-def result_row(result, tag):
+def cmd_threads(cfg, args):
+    action = args.action or "list"
+    if action == "list":
+        rows = runs.list_threads(cfg)
+        if args.json:
+            print(json.dumps(rows, indent=2, ensure_ascii=False))
+            return
+        if not rows:
+            print("no active threads")
+            return
+        for row in rows:
+            marker = " *" if row["is_last"] else ""
+            print(
+                f'{row["thread"] + marker:28s} turns={row["turns"]:<3d} model={str(row["model"]):32s} '
+                f'cost={ledger.money(row["cost_total"])} updated={row["updated"]}'
+            )
+        return
+    if action == "show":
+        name = args.name or runs.last_thread_name(cfg)
+        if not name:
+            raise ValueError("threads show needs a thread name (no last thread recorded)")
+        thread = runs.load_thread(cfg, name)
+        if thread is None:
+            raise ValueError(f"no such thread: {name}")
+        if args.json:
+            print(json.dumps(thread, indent=2, ensure_ascii=False))
+            return
+        print(f'# Thread {thread["thread"]} (model={thread.get("model")}, effort={thread.get("effort")}, turns={len(thread.get("turns") or [])})')
+        if thread.get("system"):
+            print(f'System: {thread["system"]}')
+        for turn in thread.get("turns") or []:
+            imgs = ", ".join(turn.get("source_images") or []) or "(no new images)"
+            print(f'\n--- Turn {turn["turn"]} ({turn.get("model")}, {ledger.money(turn.get("cost"))}, images: {imgs}) ---')
+            print("User:\n" + turn["user_text"])
+            print("\nAssistant:\n" + turn["assistant_text"])
+        return
+    if action == "clear":
+        with ledger.locked(cfg):
+            removed = runs.clear_threads(cfg, name=args.name, clear_all=args.all)
+        if args.json:
+            print(json.dumps({"cleared": removed}, indent=2))
+        else:
+            print("cleared: " + (", ".join(removed) if removed else "none"))
+        return
+    raise ValueError(f"unknown threads action: {action}")
+
+
+def result_row(cfg, result, tag):
     meta = result["meta"]
     return {
         "tag": tag,
@@ -300,7 +432,7 @@ def result_row(result, tag):
         "cost": meta["cost"],
         "skipped": result["skipped"],
         "answer": result["parsed"] if result["parsed"] is not None else result["answer"],
-        "run": meta["run_md"],
+        "run": str(runs.resolve_saved_path(meta["run_md"], cfg)),
     }
 
 
@@ -317,7 +449,7 @@ def cmd_panel(cfg, args):
             request = request_from_args(args, model, prompt)
             try:
                 result = do_call(cfg, request, quiet=True)
-                rows.append(result_row(result, request.tag))
+                rows.append(result_row(cfg, result, request.tag))
             except (ValueError, client.ApiError) as exc:
                 # One model failing (allocation, pinned endpoint, truncated answer) must not cost
                 # the answers already paid for. Its transcript and ledger record are on disk.
@@ -390,7 +522,7 @@ def cmd_batch(cfg, args):
         for request in requests:
             try:
                 result = do_call(cfg, request, quiet=True, resume=not args.redo)
-                rows.append(result_row(result, request.tag))
+                rows.append(result_row(cfg, result, request.tag))
             except (ValueError, client.ApiError) as exc:
                 # An unusable or rejected answer is saved and charged; the rest of the batch runs.
                 failed += 1
@@ -430,7 +562,7 @@ def cmd_cost(cfg, args):
         print(json.dumps(data, indent=2))
         return
     print(f'session: {data["calls_session"]} calls, {ledger.money(data["cost_session"])} reported')
-    print(f'project: {data["calls_total"]} calls, {ledger.money(data["cost_total"])} reported')
+    print(f'ledger total: {data["calls_total"]} calls, {ledger.money(data["cost_total"])} reported')
     if data["pending"] or data["unknown_costs"]:
         print("WARNING: totals are incomplete; an unresolved request or unknown cost remains")
     for model, entry in data["by_model"].items():
@@ -450,6 +582,7 @@ def cmd_status(cfg, args):
                 "management_key_present": bool(cfg.mgmt_key),
                 "state_dir": str(cfg.state_dir),
                 "session": ledger.current_session(cfg),
+                "threads_active": len(runs.list_threads(cfg)),
                 "spend": cost_data(cfg),
                 "account": account,
             },
@@ -485,7 +618,7 @@ def cmd_spend(cfg, args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="OpenRouter vision calls, image prep and cost records")
+    parser = argparse.ArgumentParser(description="OpenRouter vision calls, multi-turn threads, image prep and cost records")
     parser.add_argument("--state-dir")
     parser.add_argument("--env-file")
     parser.add_argument("--timeout", type=int, help="network timeout in seconds, default 300")
@@ -504,9 +637,9 @@ def build_parser():
     p.add_argument("images", nargs="+")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_info)
-    p = sub.add_parser("prep", help="oriented JPEG derivatives; never overwrite")
+    p = sub.add_parser("prep", help="oriented JPEG derivatives into scratch (or --out); never overwrite")
     p.add_argument("images", nargs="+")
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", help="destination directory; defaults to a fresh folder under <state_dir>/prepared/")
     p.add_argument("--preset", default="provider", choices=list(images.PRESETS))
     p.add_argument("--box", help="left,top,right,bottom as fractions of oriented source")
     p.add_argument("--long-edge", type=int, default=0, help="downsize only; implies one full/crop variant")
@@ -520,23 +653,45 @@ def build_parser():
     p.add_argument("--manifest")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_prep)
-    for name in ("ask", "panel"):
-        p = sub.add_parser(name)
-        p.add_argument("--model" if name == "ask" else "--models", required=True)
-        if name == "panel":
-            p.add_argument("--out-dir")
-        prompt = p.add_mutually_exclusive_group(required=True)
-        prompt.add_argument("--prompt")
-        prompt.add_argument("--prompt-file")
-        p.add_argument("--image", action="append", default=[])
-        p.add_argument("--system")
-        p.add_argument("--effort", default="high", choices=["none", "minimal", "low", "medium", "high", "default"])
-        p.add_argument("--max-tokens", type=int, default=4000)
-        p.add_argument("--json", action="store_true")
-        p.add_argument("--schema")
-        p.add_argument("--tag")
-        p.add_argument("--quiet", action="store_true")
-        p.set_defaults(func=cmd_ask if name == "ask" else cmd_panel)
+    p = sub.add_parser("ask", help="single-turn or multi-turn (--thread / --continue) vision request")
+    p.add_argument("--model", help="allowed model slug or short name; optional when continuing an existing thread")
+    tgroup = p.add_mutually_exclusive_group()
+    tgroup.add_argument("--thread", help="named multi-turn conversation stored in scratch state")
+    tgroup.add_argument("--continue", dest="continue_last", action="store_true", help="continue the most recently used thread")
+    p.add_argument("--reset-thread", action="store_true", help="clear prior turns for --thread before starting fresh")
+    prompt = p.add_mutually_exclusive_group(required=True)
+    prompt.add_argument("--prompt")
+    prompt.add_argument("--prompt-file")
+    p.add_argument("--image", action="append", default=[])
+    p.add_argument("--system")
+    p.add_argument("--effort", default=None, choices=["none", "minimal", "low", "medium", "high", "default"])
+    p.add_argument("--max-tokens", type=int, default=4000)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--schema")
+    p.add_argument("--tag")
+    p.add_argument("--quiet", action="store_true")
+    p.set_defaults(func=cmd_ask)
+    p = sub.add_parser("panel", help="ask several distinct models the same prompt in one run")
+    p.add_argument("--models", required=True)
+    p.add_argument("--out-dir")
+    prompt = p.add_mutually_exclusive_group(required=True)
+    prompt.add_argument("--prompt")
+    prompt.add_argument("--prompt-file")
+    p.add_argument("--image", action="append", default=[])
+    p.add_argument("--system")
+    p.add_argument("--effort", default="high", choices=["none", "minimal", "low", "medium", "high", "default"])
+    p.add_argument("--max-tokens", type=int, default=4000)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--schema")
+    p.add_argument("--tag")
+    p.add_argument("--quiet", action="store_true")
+    p.set_defaults(func=cmd_panel)
+    p = sub.add_parser("threads", help="inspect or clear multi-turn scratch conversations")
+    p.add_argument("action", nargs="?", default="list", choices=["list", "show", "clear"])
+    p.add_argument("name", nargs="?")
+    p.add_argument("--all", action="store_true", help="with clear: remove all saved threads")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_threads)
     p = sub.add_parser("batch")
     p.add_argument("tasks")
     p.add_argument("--out")

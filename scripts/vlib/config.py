@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import os
 import shlex
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[2]
+SCRATCH_ROOT = Path("/tmp/pq_scratch")
 
 
 @dataclass
@@ -60,6 +62,22 @@ def model_of(name):
     return BY_SLUG.get(resolve_model(name))
 
 
+def default_model():
+    chosen = next((m.slug for m in ALLOWED if m.default_look), None)
+    return chosen or (ALLOWED[0].slug if ALLOWED else "")
+
+
+def default_state_dir():
+    # Keep catalog caches (~1.7 MB), spend ledgers, and multi-turn scratch threads outside project
+    # workspaces by default so `look` and `vision.py` never litter workspaces with `vision_runs/`
+    # directories. Durable visual findings belong in the project's normal notes and reports.
+    try:
+        SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+        return SCRATCH_ROOT / "vision"
+    except OSError:
+        return Path(tempfile.gettempdir()) / f"vision_skill_{os.getuid()}"
+
+
 def read_env_file(path):
     values = {}
     for number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
@@ -105,6 +123,12 @@ class Config:
     def runs_dir(self):
         return self.state_dir / "runs"
 
+    def threads_dir(self):
+        return self.state_dir / "threads"
+
+    def prepared_dir(self):
+        return self.state_dir / "prepared"
+
 
 def load_config(env_file=None, state_dir=None, timeout=None):
     file = find_env_file(env_file)
@@ -117,7 +141,7 @@ def load_config(env_file=None, state_dir=None, timeout=None):
     seconds = 300 if timeout is None else timeout
     if seconds <= 0:
         raise ValueError("timeout must be positive")
-    state = state_dir or os.environ.get("VISION_STATE_DIR") or "vision_runs"
+    state = state_dir or os.environ.get("VISION_STATE_DIR") or default_state_dir()
     return Config(
         api_key=setting("OR_API_KEY"),
         mgmt_key=setting("OR_MGMNT_KEY"),

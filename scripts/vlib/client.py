@@ -82,16 +82,24 @@ def provider_block(endpoint):
     return block
 
 
-def build_payload(slug, endpoint, prompt, image_paths, system=None, effort="high", max_tokens=4000, schema=None):
+def user_message(slug, endpoint, prompt, image_paths):
     content = [{"type": "text", "text": prompt}]
     limits = config.UPLOAD_LIMITS.get((slug, endpoint), {})
-    for path in image_paths:
+    for path in image_paths or []:
         mime, data = images.upload_bytes(path, max_bytes=limits.get("image_bytes", 0))
         content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(data).decode()}"}})
+    return {"role": "user", "content": content}
+
+
+def build_payload(slug, endpoint, prompt, image_paths, system=None, effort="high", max_tokens=4000, schema=None, history=None):
+    limits = config.UPLOAD_LIMITS.get((slug, endpoint), {})
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": content})
+    for turn in history or []:
+        messages.append(user_message(slug, endpoint, turn["user_text"], turn.get("image_paths") or []))
+        messages.append({"role": "assistant", "content": turn["assistant_text"]})
+    messages.append(user_message(slug, endpoint, prompt, image_paths))
     payload = {"model": slug, "messages": messages, "max_tokens": max_tokens, "provider": provider_block(endpoint)}
     if effort != "default":
         payload["reasoning"] = {"effort": effort}

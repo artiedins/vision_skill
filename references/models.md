@@ -25,23 +25,33 @@ OpenRouter's live endpoint list, that endpoint's health status and its per-milli
   on nine probe calls the two agreed to the last decimal on all nine once cache reads were counted
   at the cache price.
 
-## The nine models, as of 2026-10-28
+## The sixteen models, as of 2026-11-15
 
-Prices are the pinned endpoint's catalog price per million tokens, in and out.
+Prices are the pinned endpoint's catalog price per million tokens, in and out, verified via
+`models --refresh` and paid `probe` across all sixteen pins (`$0.0217` total). On this account,
+`anthropic/claude-fable-5.2` is pinned to `google-vertex/global` because `amazon-bedrock` is
+BYOK-only for Fable 5.2.
 
 | model | pinned endpoint | $/Mtok | starting use |
 | --- | --- | --- | --- |
-| `openai/gpt-6.1-terra` | `openai/flex` | 0.5 / 2.5 | default general work: cheapest model that gave exact coordinates |
-| `openai/gpt-6.1-sol` | `openai/flex` | 1 / 5 | inventory and localisation; reasoning is mandatory, so budget tokens |
-| `anthropic/claude-opus-5.5` | `amazon-bedrock` | 4 / 20 | geometry, shadow and camera reasoning, awkward judgement calls |
-| `google/gemini-4-argon` | `google-vertex/global` | 2 / 10 | strongest all-round reading; start here when the answer must be right |
+| `openai/gpt-6-luna` | `openai/flex` | 0.05 / 0.25 | ultra-cheap bulk passes; accurate plot numbers and 0.967 UI button IoU at ~$0.00012/call |
+| `z-ai/glm-5.3-flash` | `gmicloud/fp8` | 0.075 / 0.25 | ultra-cheap open-weight pass (~$0.00012/call); fast prose and plot checks, looser boxes (0.841 IoU) |
+| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | 0.089 / 0.5 | cheap bulk description; reasoning ate a 2500-token cap on a real photo and returned nothing |
+| `google/gemini-3.8-flash` | `google-vertex/global/flex` | 0.375 / 1.875 | bulk passes: plots, tables, first-pass inventory (~$0.0006/call; flex latency can spike) |
+| `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | 0.326 / 0.652 | captioning only: boxes failed the card test, exhausted 2500 tokens on a photo, and stalled 293s on probe |
+| `openai/gpt-6.1-terra` | `openai/flex` | 0.5 / 2.5 | default general `look` work (~$0.0011/call): BenchLM 77.4, exact coordinates (0.982-0.99 IoU), low reasoning overhead |
+| `moonshotai/kimi-k3.1-pro` | `morph/fp8` | 0.692 / 8.82 | strongest open-weight multimodal reader (BenchLM 72.4, 0.982 UI IoU) for cross-family comparison |
+| `openai/gpt-6.1-sol` | `openai/flex` | 1 / 5 | dense inventory, localisation (0.982-0.99 IoU), and chart analytics (Plotly 43/43); reasoning is mandatory |
 | `google/gemini-3.1-pro-preview` | `google-vertex/global/flex` | 1 / 6 | constrained comparison between named candidates |
-| `google/gemini-3.8-flash` | `google-vertex/global/flex` | 0.375 / 1.875 | bulk passes: plots, tables, first-pass inventory |
+| `google/gemini-4-hydrogen` | `google-vertex/global` | 1.5 / 7.5 | fast Gemini 4 reader (Chartography 66.6%, Plotly 43/43, AA Index 54 Xhigh / 51 High / 41 Med; no Vertex flex pin yet) |
 | `x-ai/grok-4.7` | `xai/zdr` | 2 / 6 | second opinion and blunt critique; refuses headings instead of inventing them |
-| `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | 0.37 / 0.739 | captioning only: boxes failed the card test, and it returned nothing at 2500 tokens on a photo |
-| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | 0.103 / 0.6 | cheapest calls of all; reasoning ate a 2500-token cap on a real photo and returned nothing |
+| `anthropic/claude-sonnet-5.5` | `amazon-bedrock` | 2 / 10 | UI and computer-use specialist (OSWorld-2.1 83.9%, BenchLM 78.9, 1.7-2.3s latency, 0.981 UI IoU) |
+| `google/gemini-4-argon` | `google-vertex/global` | 2 / 10 | strong Gemini 4 reading (AA Index 50); superseded on intelligence at equal price by `gemini-4-carbon` |
+| `google/gemini-4-carbon` | `google-vertex/global` | 2 / 10 | highest-intelligence Gemini 4 flagship (AA Index 60) at the same `$2/$10` price as Argon |
+| `anthropic/claude-opus-5.5` | `amazon-bedrock` | 4 / 20 | geometry, shadow and camera reasoning, awkward judgement calls (BenchLM 85.1) |
+| `anthropic/claude-fable-5.2` | `google-vertex/global` | 8 / 40 | highest overall multimodal accuracy (BenchLM #1 at 90.4); reserve for decisive tie-breakers |
 
-## Two measured tests
+## Three measured tests
 
 Neither is a capability ranking: each uses one image per model. Read the card test as output-format
 and coordinate evidence, and the photograph test as evidence about scene reading, reasoning cost and
@@ -138,13 +148,45 @@ with shading or lighting arguments were the ones that failed an independent pixe
 numeric claims could be checked and mostly survived; confidence percentages were uncalibrated in both
 directions.
 
+### Test 3: matplotlib plot defects and UI checkout card (2026-11-15)
+
+Nine value-frontier models were tested at `--effort low --max-tokens 1600` (`$0.0413` total across
+18 calls) on two 2026-11-15 synthetic targets: (A) a 1200x750 matplotlib validation plot containing
+two exact series values (`peak=87.4%`, `ep30_base=80.4%`), a label straddling both the `y=85.0%`
+dashed threshold line and the `Hydrogen-LoRA` curve, and a batch-size note sitting directly on the
+bottom x-axis spine; and (B) a 1280x800 checkout UI screenshot (`#INV-9042`, `$42.50`, disabled wire
+button, and primary green pay button at `[0.6562, 0.3375, 0.9297, 0.4175]`).
+
+| model | plot cost | plot sec | plot rtok | plot defects caught | UI cost | UI sec | UI IoU |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `gpt-6-luna` | $0.00013 | 3.5 | 179 | line + axis | $0.00012 | 5.1 | 0.967 |
+| `glm-5.3-flash` | $0.00011 | 4.0 | 1 | line + curve + axis | $0.00013 | 2.2 | 0.841 |
+| `gemini-3.8-flash` | $0.00057 | 12.1 | 0 | line + axis | $0.00063 | 12.6 | 0.970 |
+| `gpt-6.1-terra` | $0.00110 | 10.3 | 94 | line + curve + axis | $0.00108 | 11.9 | 0.982 |
+| `kimi-k3.1-pro` | $0.00601 | 6.6 | 526 | line + axis | $0.00341 | 2.5 | 0.982 |
+| `gpt-6.1-sol` | $0.00188 | 4.2 | 33 | line + axis | $0.00199 | 2.6 | 0.982 |
+| `gemini-4-hydrogen` | $0.00538 | 3.6 | 407 | line + axis | $0.00426 | 2.5 | 0.974 |
+| `claude-sonnet-5.5` | $0.00381 | 2.3 | 0 | line + curve + axis | $0.00406 | 1.7 | 0.981 |
+| `gemini-4-carbon` | $0.00327 | 4.5 | 0 | line + axis | $0.00341 | 4.5 | 0.962 |
+
+All nine models read `87.4%`, `80.4%`, `#INV-9042`, and `$42.50` accurately. `gpt-6.1-terra`
+(`~$0.0011/call`) combined exact coordinates (`0.982` IoU), low reasoning overhead, and strong
+general multimodal ranking (BenchLM `77.4`), making it the strongest default for single-call `look`
+use at `--effort low`. `gpt-6-luna` (`~$0.00012/call`) delivered 9x cheaper bulk checks with `0.967`
+IoU. In the `$1.50-$2.00` input bracket, `gemini-4-hydrogen` (`2.5-3.6s`) is fast on standard Vertex
+for chart-heavy work, `claude-sonnet-5.5` (`1.7-2.3s`) leads UI speed and subtle overlap detection,
+and `gemini-4-carbon` matches `gemini-4-argon` on price while leading it by 10 points on Artificial
+Analysis Intelligence Index (`60` vs `50`).
+
 ## Choosing when the task matters
 
-Use one cheap strong model first (`gpt-6.1-terra` or `gemini-3.8-flash`), read its answer, then buy
-a second opinion only if the answer turns on something you cannot verify yourself. Spend the
-expensive models on the question that decides the outcome, not on a broad sweep: in the worked
-geolocation task the decisive comparison cost $0.09 on Gemini 3.1 Pro, while $0.96 on the most
-expensive model produced a fine description and no discriminating claim.
+Use one cheap strong model first (`gpt-6.1-terra` for general UI/plot/coordinate checks,
+`gemini-3.8-flash` or `gpt-6-luna` for bulk sweeps), read its answer, then buy a second opinion
+(`gemini-4-hydrogen` or `gpt-6.1-sol` on charts, `claude-sonnet-5.5` on dense UI, `gemini-4-carbon`,
+`claude-opus-5.5`, or `claude-fable-5.2` on hard scenes) only if the answer turns on something you
+cannot verify yourself. Spend the expensive models on the question that decides the outcome, not on
+a broad sweep: in the worked geolocation task the decisive comparison cost $0.09 on Gemini 3.1 Pro,
+while $0.96 on the most expensive model produced a fine description and no discriminating claim.
 
 Reasoning effort moves cost more than model choice does. `low` is enough for inventory and reading;
 reserve `high` for geometry, and give it 6000 or more output tokens so the reasoning does not eat

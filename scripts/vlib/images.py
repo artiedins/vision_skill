@@ -130,13 +130,20 @@ def display_image(path):
         return image
 
 
-def upload_bytes(path):
-    if Path(path).suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+def upload_bytes(path, max_bytes=0):
+    suffix = Path(path).suffix.lower()
+    if suffix not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
         raise ValueError("send JPEG/PNG/WebP or a still GIF; use prep for raw, TIFF or HEIC input")
     with display_image(path) as image:
         buffer = io.BytesIO()
-        image.save(buffer, "PNG")
-        return "image/png", buffer.getvalue()
+        # WebP can be a plot or a photograph. Preserve it losslessly until the caller
+        # has explicitly prepared a JPEG; no unreliable photo classifier here.
+        format = "JPEG" if suffix in (".jpg", ".jpeg") else "PNG"
+        image.save(buffer, format, **({"quality": 92} if format == "JPEG" else {}))
+        data = buffer.getvalue()
+        if max_bytes and len(data) > max_bytes:
+            raise ValueError(f"normalized image has {len(data)} raw bytes, limit {max_bytes}; use prep or crop before a paid call")
+        return "image/jpeg" if format == "JPEG" else "image/png", data
 
 
 def probe(path):
@@ -299,6 +306,9 @@ def variant_list(preset, box=None, long_edge=0, scale=1.0, contrast=1.0, sharpen
 def probe_card(path):
     # Synthetic card for the paid reachability probe: a legible number, a coloured square and a
     # distinct shape. Drawn locally so the probe needs no user image and no personal data.
+    path = Path(path)
+    if path.is_file() and path.stat().st_size > 0:
+        return str(path)
     from PIL import ImageDraw
 
     width, height = 640, 480
@@ -307,4 +317,4 @@ def probe_card(path):
     draw.rectangle([40, 40, 200, 200], fill=(200, 30, 30))
     draw.ellipse([430, 60, 600, 230], fill=(25, 70, 190))
     draw.text((250, 210), "42", fill=(10, 10, 10), font_size=190)
-    return save(image, Path(path), quality=92)["path"]
+    return save(image, path, quality=92)["path"]

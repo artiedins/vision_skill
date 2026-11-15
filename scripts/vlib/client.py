@@ -84,8 +84,9 @@ def provider_block(endpoint):
 
 def build_payload(slug, endpoint, prompt, image_paths, system=None, effort="high", max_tokens=4000, schema=None):
     content = [{"type": "text", "text": prompt}]
+    limits = config.UPLOAD_LIMITS.get((slug, endpoint), {})
     for path in image_paths:
-        mime, data = images.upload_bytes(path)
+        mime, data = images.upload_bytes(path, max_bytes=limits.get("image_bytes", 0))
         content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(data).decode()}"}})
     messages = []
     if system:
@@ -96,6 +97,9 @@ def build_payload(slug, endpoint, prompt, image_paths, system=None, effort="high
         payload["reasoning"] = {"effort": effort}
     if schema:
         payload["response_format"] = {"type": "json_schema", "json_schema": schema}
+    request_bytes = len(json.dumps(payload).encode("utf8"))
+    if limits.get("request_bytes", 0) and request_bytes > limits["request_bytes"]:
+        raise ValueError(f"encoded request is {request_bytes} bytes, above the configured {limits['request_bytes']}-byte policy; use prep/crop or fewer images")
     return payload
 
 

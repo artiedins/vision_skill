@@ -108,6 +108,7 @@ def do_call(cfg, request, quiet=False, resume=False):
         "max_tokens": request.max_tokens,
         "prompt": payload["messages"][-1]["content"][0]["text"],
         "image_paths": [str(Path(p).resolve()) for p in request.image_paths],
+        "ephemeral_inputs": [str(Path(p).resolve()) for p in request.image_paths if Path(p).resolve().is_relative_to(Path("/tmp"))],
         "images": probed,
         "when": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "run_md": str(cfg.runs_dir() / f"{name}.md"),

@@ -14,6 +14,7 @@ class Model:
     endpoint: str
     tier: str
     note: str
+    default_look: bool = False
 
 
 # Every model is pinned to one OpenRouter endpoint tag. The request sets provider.only to that
@@ -21,18 +22,30 @@ class Model:
 # A tag without a region segment also matches that provider's regional siblings (for example
 # amazon-bedrock includes amazon-bedrock/us-east-1). Pass the region form to narrow it further.
 ALLOWED = [
+    Model("openai/gpt-6-luna", "GPT-6 Luna", "openai/flex", "cheap", "Ultra-cheap OpenAI vision pass; check coordinates and small-text fidelity before relying on it."),
+    Model("z-ai/glm-5.3-flash", "GLM 5.3 Flash", "gmicloud/fp8", "cheap", "Low-cost open-weight vision pass; budget extra tokens if reasoning is verbose."),
     Model("deepseek/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash", "morph/fp8", "cheap", "Cheap bulk description, pre-filtering, rough captioning."),
-    Model("xiaomi/mimo-v2.6-pro", "MiMo V2.6 Pro", "gmicloud/bf16", "mid", "Unrated here: general description, second opinion."),
-    Model("openai/gpt-6.1-sol", "GPT-6.1 Sol", "openai/flex", "mid", "Landmark and object inventory with fractional boxes; reasoning is mandatory."),
-    Model("anthropic/claude-opus-5.5", "Claude Opus 5.5", "amazon-bedrock", "premium", "Geometry, shadow and camera reasoning; slowest and dearest per call."),
-    Model("google/gemini-4-argon", "Gemini 4 Argon", "google-vertex/global", "premium", "Strongest all-round reading; start here when the answer must be right."),
-    Model("openai/gpt-6.1-terra", "GPT-6.1 Terra", "openai/flex", "mid", "Screenshot, interface and document-heavy reading."),
-    Model("google/gemini-3.8-flash", "Gemini 3.8 Flash", "google-vertex/global/flex", "cheap", "Plots, tables, bulk inventory; the usual first pass."),
-    Model("x-ai/grok-4.7", "Grok 4.7", "xai/zdr", "mid", "Unrated here: general description, blunt critique."),
+    Model("google/gemini-3.8-flash", "Gemini 3.8 Flash", "google-vertex/global/flex", "cheap", "Plots, tables, bulk inventory; cheap reliable matplotlib layout check at low effort."),
+    Model("xiaomi/mimo-v2.6-pro", "MiMo V2.6 Pro", "gmicloud/bf16", "mid", "Captioning and general description; boxes were inaccurate on the card test."),
+    Model("openai/gpt-6.1-terra", "GPT-6.1 Terra", "openai/flex", "mid", "Default general work: fast screenshot, UI, document, and exact-coordinate reading.", default_look=True),
+    Model("moonshotai/kimi-k3.1-pro", "Kimi K3.1 Pro", "morph/fp8", "mid", "Strongest open-weight multimodal reader for cross-family comparison."),
+    Model("openai/gpt-6.1-sol", "GPT-6.1 Sol", "openai/flex", "mid", "Dense landmark/object inventory, exact fractional boxes, and chart analytics; reasoning is mandatory."),
     Model("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro", "google-vertex/global/flex", "mid", "Constrained comparison between named candidates; check its confidence numbers."),
+    Model("google/gemini-4-hydrogen", "Gemini 4 Hydrogen", "google-vertex/global", "mid", "Fast Gemini 4 multimodal/agentic reader; strong on charts and structured visual reasoning."),
+    Model("x-ai/grok-4.7", "Grok 4.7", "xai/zdr", "mid", "General description and blunt second opinion; refuses ungrounded headings."),
+    Model("anthropic/claude-sonnet-5.5", "Claude Sonnet 5.5", "amazon-bedrock", "mid", "Desktop/web UI reading, dense screenshots, and grounded visual reasoning."),
+    Model("google/gemini-4-argon", "Gemini 4 Argon", "google-vertex/global", "premium", "Strong all-round Gemini 4 reading; compare with Gemini 4 Carbon at the same price."),
+    Model("google/gemini-4-carbon", "Gemini 4 Carbon", "google-vertex/global", "premium", "Highest-intelligence Gemini 4 model for hard visual, scientific, and document reasoning."),
+    Model("anthropic/claude-opus-5.5", "Claude Opus 5.5", "amazon-bedrock", "premium", "Geometry, shadow and camera reasoning, awkward judgement calls."),
+    Model("anthropic/claude-fable-5.2", "Claude Fable 5.2", "google-vertex/global", "premium", "Top-tier multimodal accuracy for decisive tie-breakers; dearest per call."),
 ]
 BY_SLUG = {m.slug: m for m in ALLOWED}
 SHORT = {m.slug.split("/")[1]: m.slug for m in ALLOWED}
+
+# ### HUMAN_REVIEW
+# Set (model, endpoint) image_bytes and request_bytes only after verifying provider limits.
+# Empty policies preserve the standalone default; no universal 3.6MiB cap is assumed.
+UPLOAD_LIMITS = {}
 
 
 def resolve_model(name):
@@ -72,9 +85,13 @@ def find_env_file(explicit=None):
         if not path.is_file():
             raise ValueError(f"explicit .env file does not exist: {path}")
         return path
-    # /workspace is the project root inside run_agent.sh, so a key placed there
-    # is found from any subdirectory the agent happens to be working in
-    return next((p for p in (Path.cwd() / ".env", Path("/workspace/.env"), SKILL_ROOT / ".env") if p.is_file()), None)
+    # Check cwd/.env first, then <project>/.env when installed under <project>/skills/vision_skill,
+    # then /workspace/.env (the sandbox mount point inside run_agent.sh), then SKILL_ROOT/.env.
+    candidates = [Path.cwd() / ".env"]
+    if SKILL_ROOT.parent.name == "skills":
+        candidates.append(SKILL_ROOT.parents[1] / ".env")
+    candidates.extend([Path("/workspace/.env"), SKILL_ROOT / ".env"])
+    return next((p for p in candidates if p.is_file()), None)
 
 
 @dataclass
@@ -100,7 +117,7 @@ def load_config(env_file=None, state_dir=None, timeout=None):
     seconds = 300 if timeout is None else timeout
     if seconds <= 0:
         raise ValueError("timeout must be positive")
-    state = state_dir or "vision_runs"
+    state = state_dir or os.environ.get("VISION_STATE_DIR") or "vision_runs"
     return Config(
         api_key=setting("OR_API_KEY"),
         mgmt_key=setting("OR_MGMNT_KEY"),

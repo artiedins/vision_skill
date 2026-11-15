@@ -1,6 +1,6 @@
 ---
 name: vision
-description: Use OpenRouter vision models to identify or locate objects, discuss colour and design, read text and plots, compare images against each other or against candidate map imagery, assess image quality, or inspect sampled video frames. Includes local image preparation, a nine-model allow-list in which each model is pinned to one provider endpoint, a paid endpoint probe, saved answers and per-call cost records.
+description: Use OpenRouter vision models to identify or locate objects, discuss colour and design, read text and plots, compare images against each other or against candidate map imagery, assess image quality, or inspect sampled video frames. Includes local image preparation, a sixteen-model allow-list in which each model is pinned to one provider endpoint, a paid endpoint probe, saved answers and per-call cost records.
 compatibility: Requires Python 3.10+, Pillow, network access to openrouter.ai and an inference API key. Optional rawpy for camera raw, pillow-heif for HEIC, and ffmpeg for video frame extraction.
 license: Apache-2.0
 metadata:
@@ -103,14 +103,14 @@ Report with `cost` (calls made here) plus the delta when it was taken.
 - Layout habits that prevent the collisions it finds: push level labels off their own horizontal
   lines, flip a value label to the left of its marker when a vertical guide falls between marker
   and label, and anchor near-bottom text `va="bottom"` so it does not sit on the axis line.
-- `prep` writes the 2048 px variant only when the source long edge exceeds 2048, so a source that
-  shrank leaves a **stale** 2048 px file that a later batch silently uses. Delete
-  `vision_runs/prepared` before re-preparing a regenerated figure.
+- `prep` writes every requested variant, even when the source is smaller than its target long edge. It refuses to overwrite a source or existing output. For a regenerated figure, choose a new `--out` directory or unique `--prefix`, and use the output paths returned by that invocation. Do not delete earlier prepared evidence automatically.
 - Expect roughly 2-4 calls per figure (find the defects, fix, re-check), so a 5-figure batch lands
   around $0.01-0.03 with the recipe above.
 
 An initial paid request starts a session automatically if needed. Sessions exist only to split
 cost totals; `cost` reports both the current-session and whole-ledger totals.
+
+State directory precedence is explicit `--state-dir`, then `VISION_STATE_DIR`, then `vision_runs` relative to the current directory. The harness sets a run-local directory unless the operator supplies one; other harnesses and direct CLI use keep the standalone default. Known-cost totals exclude unknown costs, so always report unknown and pending counts alongside spend.
 
 ## Prepare images
 
@@ -135,9 +135,10 @@ python3 skills/vision_skill/scripts/vision.py prep photo.jpg --out vision_runs/d
   create a lossless crop with Pillow. Never replace originals. Raw preparation decodes the full
   image, not its embedded thumbnail; HEIC/raw require optional dependencies.
 - Uploads accept JPEG, PNG, WebP and still GIF. They apply EXIF orientation, convert an embedded
-  colour profile to sRGB, flatten transparency onto white, strip metadata and encode PNG for the
-  request. Multipage/animated inputs require explicit extraction first. There is no automatic
-  downsizing at upload time, so prepare oversized images first.
+  colour profile to sRGB, flatten transparency onto white, strip metadata, re-encode JPEG inputs as
+  JPEG (`quality=92`), and encode PNG, WebP and still GIF inputs losslessly as PNG for the request.
+  Multipage/animated inputs require explicit extraction first. There is no automatic downsizing at
+  upload time, so prepare oversized images first.
 
 ### Screenshots from the browser
 
@@ -268,21 +269,28 @@ results are saved after each item when `--out` is supplied.
 
 ## Model choice
 
-Only these nine slugs are allowed. Short names without the vendor prefix also resolve to this list.
+Only these sixteen slugs are allowed. Short names without the vendor prefix also resolve to this list.
 Each model is pinned to one OpenRouter endpoint. If a slug or its endpoint is unavailable, report
 it. Do not substitute a model outside the list.
 
 | OpenRouter slug | pinned endpoint | starting use |
 | --- | --- | --- |
-| `openai/gpt-6.1-terra` | `openai/flex` | default general work; cheapest exact-coordinate reader tested |
-| `openai/gpt-6.1-sol` | `openai/flex` | inventory and localisation; reasoning is mandatory |
-| `anthropic/claude-opus-5.5` | `amazon-bedrock` | geometry, shadow and camera reasoning, awkward judgement |
-| `google/gemini-4-argon` | `google-vertex/global` | strongest all-round reading |
+| `openai/gpt-6-luna` | `openai/flex` | ultra-cheap bulk passes (`$0.05/$0.25`); good boxes and basic plot checks |
+| `z-ai/glm-5.3-flash` | `gmicloud/fp8` | ultra-cheap open-weight sweeps (`$0.075/$0.25`); looser bounding boxes |
+| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | cheap rough captioning; reasoning can consume small token caps |
+| `google/gemini-3.8-flash` | `google-vertex/global/flex` | cheap plots, tables, bulk first pass (`$0.375/$1.875`) |
+| `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | captioning only; weak boxes, and `gmicloud/bf16` can stall |
+| `openai/gpt-6.1-terra` | `openai/flex` | default general `look` work (`$0.50/$2.50`); fast UI, screenshot, and exact boxes |
+| `moonshotai/kimi-k3.1-pro` | `morph/fp8` | strongest open-weight multimodal reader for cross-family checks |
+| `openai/gpt-6.1-sol` | `openai/flex` | dense object inventory, exact boxes, and chart analytics; reasoning is mandatory |
 | `google/gemini-3.1-pro-preview` | `google-vertex/global/flex` | constrained comparison between named candidates |
-| `google/gemini-3.8-flash` | `google-vertex/global/flex` | charts, tables, bulk first pass |
+| `google/gemini-4-hydrogen` | `google-vertex/global` | fast Gemini 4 chart, plot, and structured visual reasoning (`$1.50/$7.50`) |
 | `x-ai/grok-4.7` | `xai/zdr` | second opinion, blunt critique |
-| `xiaomi/mimo-v2.6-pro` | `gmicloud/bf16` | captioning only; weak boxes, and it exhausted 2500 tokens on a photo |
-| `deepseek/deepseek-v4.1-flash-1017` | `morph/fp8` | cheapest calls; reasoning can consume the whole allowance |
+| `anthropic/claude-sonnet-5.5` | `amazon-bedrock` | desktop/web UI screenshots and grounded visual reasoning (`$2.00/$10.00`) |
+| `google/gemini-4-argon` | `google-vertex/global` | Gemini 4 reading (`$2.00/$10.00`); compare with `gemini-4-carbon` at the same price |
+| `google/gemini-4-carbon` | `google-vertex/global` | highest-intelligence Gemini 4 flagship (`$2.00/$10.00`) for hard visual reasoning |
+| `anthropic/claude-opus-5.5` | `amazon-bedrock` | geometry, shadow and camera reasoning, awkward judgement (`$4.00/$20.00`) |
+| `anthropic/claude-fable-5.2` | `google-vertex/global` | top-tier multimodal tie-breaker (`$8.00/$40.00`); `amazon-bedrock` is BYOK-only |
 
 The pin is enforced in the request with `provider.only` and `allow_fallbacks: false`, so a call
 either reaches that endpoint or fails with HTTP 404 naming the providers that do serve the model.
@@ -300,7 +308,7 @@ per-million-token prices. Measured scene-reading behaviour, including the two mo
 nothing at a small token cap, is in the photograph test of
 [references/models.md](references/models.md). `probe` makes one tiny paid call per model with a
 synthetic card: the cheapest end-to-end proof that a pinned endpoint serves this account, and the
-only way to see an account data-policy refusal. All nine cost about $0.01 with `--effort low`.
+only way to see an account data-policy or BYOK refusal. All sixteen cost about $0.02 with `--effort low`.
 
 Model-selection notes, measured prices and dated evidence are in
 [references/models.md](references/models.md). For prompts, load only the relevant parts of

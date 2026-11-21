@@ -10,7 +10,7 @@ live per-million-token prices. `models --refresh` skips the six-hour cache.
 
 ## Pins and prices
 
-Snapshot 2026-11-21 from `models --refresh`. Prices are the pinned endpoint's rate per million
+Captured on 2026-11-21 from `models --refresh`. Prices are the pinned endpoint's rate per million
 tokens, in and out; `usage.cost` in the ledger stays the billed authority.
 
 | model | pin | $/Mtok | role |
@@ -26,18 +26,18 @@ Flex service tiers bill at roughly half the standard rate for the same weights. 
 4 models the only flex pin OpenRouter lists is `google-ai-studio/flex`; there is no
 `google-vertex/*/flex` for them. Every pin above answered a test card on 2026-11-21.
 
-Two facts about flex worth remembering:
+Two flex behaviors to account for:
 
-- Flex latency is unpredictable. The same Gemini 3.8 Flash card has taken 2 s, 48 s and 101 s, and
+- Flex latency is unpredictable. The same Gemini 3.8 Flash card has taken 2 s, 48 s, and 101 s, and
   Gemini 3.1 Pro took 98 s and 190 s on different calls. Raise `--timeout` before calling a slow
   response a failure. A `look` call on Terra finishes in 2-4 s.
-- An unpinned request can land on a dearer endpoint. Pinning decides the price.
+- An unpinned request can route to a more expensive endpoint; pinning controls the price.
 
 ## Measured accuracy and cost
 
-99 items (Game Boy frames and out-of-distribution real-world photographs, 11 scored categories),
-`--effort high`, `max_tokens 6000`, fingerprint `29b0203ed3aa9d3c`. Full tables and per-category
-scores are in the owning project's `COMBINED_RESULTS.CSV` and `sightbench/results/scores.json`.
+Measured on 99 items (Game Boy frames and out-of-distribution real-world photographs across 11 scored
+categories) at `--effort high` and `max_tokens 6000` (fingerprint `29b0203ed3aa9d3c`). Full tables and
+per-category scores are in the owning project's `COMBINED_RESULTS.CSV` and `sightbench/results/scores.json`.
 
 | model | macro accuracy | cost for 99 calls | median latency | invalid answers |
 | --- | --- | --- | --- | --- |
@@ -50,22 +50,22 @@ scores are in the owning project's `COMBINED_RESULTS.CSV` and `sightbench/result
 
 Those runs used the standard (non-flex) endpoints for the Gemini models, so flex billing is about
 half of the cost column while the weights are the same. Five of the six sit inside one another's 95%
-confidence intervals (88.7 to 98.4%), so price and latency decide more than the ranking:
+confidence intervals (88.7 to 98.4%), so price and latency matter more than the exact ranking:
 
 - Terra delivers the top cluster at roughly one seventh the cost of Argon and one twentieth of Neon,
   which is why it is the default.
-- Argon, Neon and Hydrogen agree on nearly all items. Neon repeats Argon's score at three times the
+- Argon, Neon, and Hydrogen agree on nearly all items. Neon repeats Argon's score at three times the
   cost, so it is a tie-breaker, not a daily driver.
 - Gemini 3.8 Flash is the cheapest Google reader and the right choice for bulk layout checks, where
   it is weakest on fine spatial questions (Game Boy sprite facing) rather than on text or scenes.
-- Where the models separate: reading a Game Boy HP bar, naming the direction a sprite faces, and
-  ordering crowded small objects. Text, table, cattle-and-vehicle counting and clean photographs
+- The models separate on reading a Game Boy HP bar, naming the direction a sprite faces, and
+  ordering crowded small objects. Text, tables, cattle-and-vehicle counting, and clean photographs
   saturate near 100%.
 
 A blind control (same model, no image) scored 27.7% on the same items, so the set measures seeing
 rather than guessing.
 
-## Provider behavior worth expecting
+## Provider behavior
 
 - A pin that no longer exists returns HTTP 404 naming the providers still serving the model. That is
   the intended loud failure; check `models --refresh` and update the list instead of widening the

@@ -70,12 +70,11 @@ python3 skills/vision_skill/scripts/vision.py start --note "compare the candidat
 
 ### Spend policy
 
-A default policy in escalating tiers, with numbers adjusted to the account: below **$0.25** per task
-the spend is not worth mentioning; up to **$1-2** is the agent's discretion but report the amount;
-above a couple of dollars, ask first. When the user grants a budget, spend it on the questions that
-decide the answer.
+Default spend tiers (adjust to the account): below **$0.25** per task, no mention is needed; up to
+**$1-2**, use your discretion and report the amount; above a couple of dollars, ask first. When the
+user grants a budget, spend it on the questions that decide the answer.
 
-Two numbers with two meanings:
+Two cost sources with different scopes:
 
 - `cost` (the ledger) is authoritative for calls made in the active state directory. Harness runs
   also record `vision_calls` and `vision_cost_usd` in `task_report/stats.yaml`.
@@ -102,8 +101,8 @@ python3 skills/vision_skill/scripts/vision.py prep photo.jpg --out /tmp/pq_scrat
   The manifest records source size, pixel box, transforms and the written path.
 - `--format auto` (default) writes PNG for PNG, WebP, GIF, BMP and PPM sources and JPEG otherwise;
   `--format png` keeps plots, screenshots and pixel art lossless.
-- `prep` refuses to overwrite a source or an existing output. Presets `quads`, `bands`, `centre` and
-  `auto` exist but send only the variants a question needs. Magnification, contrast and sharpening
+- `prep` refuses to overwrite a source or an existing output. Presets `quads`, `bands`, `centre`, and
+  `auto` exist, but send only the variants a question needs. Magnification, contrast, and sharpening
   change appearance: disclose the edit and keep an unmodified reference.
 - Uploads apply EXIF orientation, convert an embedded profile to sRGB, flatten transparency onto
   white, strip metadata, and send JPEG inputs re-encoded at `quality=92` or PNG, WebP and still GIF
@@ -116,7 +115,7 @@ A browser screenshot is an ordinary image and the right input when a chart, map,
 challenge page must be understood rather than read as text.
 
 ```js
-// inside browser_execute; the path lands under /tmp/pq_browse_files, which look and vision.py can read
+// inside browser_execute; the file is saved under /tmp/pq_browse_files, which look and vision.py can read
 const shot = files.path("product.png");
 await page.screenshot({ path: shot });
 return shot;
@@ -171,8 +170,8 @@ python3 skills/vision_skill/scripts/vision.py threads show shelf-fit
   `--schema FILE` requests strict structured output. Empty, refused, truncated or unparseable answers
   are saved, charged, exit nonzero, and do not append a broken turn.
 
-For independent opinions that cannot anchor on each other, use a panel. Models run three at a time
-and `--max-spend` stops new calls once the panel spent that much.
+For independent opinions that cannot anchor on each other, use a panel. Models run three at a time,
+and `--max-spend` stops starting new calls once panel spend reaches that cap.
 
 ```sh
 python3 skills/vision_skill/scripts/vision.py panel \
@@ -220,8 +219,8 @@ python3 skills/vision_skill/scripts/vision.py probe
 `models` prints each pin, whether it is listed, the provider's `health` flag, and live per-million
 token prices; `models --refresh` bypasses the six-hour cache. It warns when a pin is missing, when a
 lookup fails, and when a provider reports nonzero health. `probe` makes one tiny paid call per model
-with a synthetic card. Which models to use for what, with measured accuracy and cost, is in
-[references/models.md](references/models.md).
+with a synthetic card. See [references/models.md](references/models.md) for model recommendations,
+measured accuracy, and costs.
 
 ## Safety, errors, reporting
 

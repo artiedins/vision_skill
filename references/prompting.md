@@ -59,8 +59,8 @@ universal definitions of a good photograph.
 
 `--json` asks for one object or array and the parser tolerates a line of lead-in prose. `--schema
 FILE` requests provider structured output; there is no fallback if the provider does not support it.
-The CLI parses JSON and does not validate against the schema, and provider compliance says nothing
-about factual correctness.
+The CLI parses JSON without validating it against the schema, and provider schema compliance does
+not guarantee factual accuracy.
 
 Reasoning tokens are billed as output tokens. The CLI's default budget is 6000 tokens at `high` and
 `medium` effort and 2000 otherwise; a smaller explicit cap can return an empty answer with

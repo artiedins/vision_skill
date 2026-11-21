@@ -35,7 +35,7 @@ python3 skills/vision_skill/scripts/vision.py cost
 
 Commands: `status`, `models`, `probe`, `info`, `prep`, `ask`, `panel`, `threads`, `batch`, `start`,
 `cost`, `spend`. Global flags (`--state-dir`, `--env-file`, `--timeout`) go before the command.
-`panel` and `batch` accept `--max-spend` and stop starting new calls once that much was spent.
+`panel` and `batch` accept `--max-spend` and stop starting new calls once spend reaches that limit.
 
 For an agent, start with [SKILL.md](SKILL.md). [models](references/models.md) covers pins, live
 prices and measured accuracy, [prompting](references/prompting.md) covers prompt craft and
@@ -44,14 +44,14 @@ coordinates, [workflow](references/workflow.md) covers multi-round investigation
 
 ## Scratch state
 
-By default state lives outside project directories at `/tmp/pq_scratch/vision` (fallback
-`<tempdir>/vision_skill_<uid>`), overridable with `VISION_STATE_DIR` or `--state-dir DIR`. It holds
+By default, state lives outside project directories at `/tmp/pq_scratch/vision` (falling back to
+`<tempdir>/vision_skill_<uid>`). Override this with `VISION_STATE_DIR` or `--state-dir DIR`. It holds
 `ledger.jsonl`, `session.json`, `runs/`, `threads/`, `prepared/`, six-hour catalog and endpoint
 caches, and `pending/` markers for in-flight requests. Conclusions belong in the project's notes and
 deliverables rather than in `vision_runs/` folders inside workspaces.
 
-- Paths inside `ledger.jsonl` and thread files are stored relative to `state_dir` or `cwd` when they
-  are inside one.
+- Paths inside `ledger.jsonl` and thread files are stored relative to `state_dir` or `cwd` whenever
+  they fall under either directory.
 - `ask --thread NAME` (and `ask --continue`) keeps conversation history and snapshots each turn's
   normalized images under `threads/<name>_media/`. Snapshots are sent byte-for-byte on later turns,
   so reusing a screenshot filename never corrupts an earlier turn and never adds a JPEG generation.
@@ -79,5 +79,6 @@ python3 skills/vision_skill/tests/test_skill.py
 ```
 
 Fourteen offline tests cover JSON extraction, cost formatting, token budgets, `prep` formats and
-manifests, thread snapshot reuse, batch resume accounting and completion handling. No network, no
-credentials, no test images ship with the skill. Licensed under [Apache-2.0](LICENSE).
+manifests, thread snapshot reuse, batch resume accounting, and completion handling. The tests require
+no network access or credentials, and no test images ship with the skill. Licensed under
+[Apache-2.0](LICENSE).

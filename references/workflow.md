@@ -13,8 +13,8 @@ debugging a visual artifact, choosing between candidates, or measuring what the 
    model's answer cannot anchor. When two independent answers disagree, settle the disagreement in
    pixels or with a decisive crop rather than with a third opinion.
 
-Write each verified finding into `NOTES.md` or the deliverable as it lands. Threads under
-`/tmp/pq_scratch/vision/threads/` are working state, not documentation.
+Write each verified finding into `NOTES.md` or the deliverable as soon as you confirm it. Threads
+under `/tmp/pq_scratch/vision/threads/` are working state, not documentation.
 
 ## Division of labor
 

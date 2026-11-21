@@ -65,14 +65,27 @@ def catalog(cfg, refresh=False):
 def endpoints(cfg, refresh=False):
     # Per-model endpoint lists. tags, health status and per-endpoint prices decide whether a
     # pinned endpoint exists at all; account data policy can still reject it at call time.
-    def fetch():
-        fetched = {}
-        for model in config.ALLOWED:
+    # One 404 slug (a retired model) must not empty the whole listing, so failures are collected
+    # and returned; a listing with a hole is not cached, since the hole may be transient.
+    cache = cfg.state_dir / "endpoints.json"
+    if not refresh and cache.is_file() and time.time() - cache.stat().st_mtime < CACHE_SECONDS:
+        try:
+            return json.loads(cache.read_text(encoding="utf-8")), []
+        except (ValueError, OSError):
+            pass
+    fetched = {}
+    failures = []
+    for model in config.ALLOWED:
+        try:
             body = request_json(f"{API}/models/{model.slug}/endpoints", cfg.api_key, timeout=60)
-            fetched[model.slug] = body.get("data") or {}
-        return fetched
-
-    return _cached(cfg, "endpoints.json", refresh, fetch)
+        except ApiError as exc:
+            failures.append((model.slug, str(exc)))
+            fetched[model.slug] = {}
+            continue
+        fetched[model.slug] = body.get("data") or {}
+    if not failures:
+        ledger.write_json(cache, fetched)
+    return fetched, failures
 
 
 def provider_block(endpoint):
@@ -100,7 +113,7 @@ def build_payload(slug, endpoint, prompt, image_paths, system=None, effort="high
         messages.append(user_message(slug, endpoint, turn["user_text"], turn.get("image_paths") or []))
         messages.append({"role": "assistant", "content": turn["assistant_text"]})
     messages.append(user_message(slug, endpoint, prompt, image_paths))
-    payload = {"model": slug, "messages": messages, "max_tokens": max_tokens, "provider": provider_block(endpoint)}
+    payload = {"model": slug, "messages": messages, "max_tokens": max_tokens, "provider": provider_block(endpoint), "usage": {"include": True}}
     if effort != "default":
         payload["reasoning"] = {"effort": effort}
     if schema:

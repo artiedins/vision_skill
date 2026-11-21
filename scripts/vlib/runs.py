@@ -48,7 +48,7 @@ def resolve_saved_path(saved, cfg):
 
 
 def fingerprint(payload):
-    # Hash the actual request, including ordered, normalised image bytes, not its label or path.
+    # Hash the actual request, including ordered, normalized image bytes, not its label or path.
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -83,16 +83,32 @@ def write_run(cfg, name, request, response, answer, meta):
 
 
 def extract_json(text):
+    # Models often write one line of lead-in before the object ("Here is the JSON:"). Fall back to
+    # scanning for the first decodable object or array instead of returning None for the whole answer.
     text = text.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.S)
     if fenced:
-        text = fenced.group(1)
-    try:
-        parsed = json.loads(text)
-        json.dumps(parsed, allow_nan=False)
-    except (ValueError, TypeError):
-        return None
-    return parsed if isinstance(parsed, (dict, list)) else None
+        text = fenced.group(1).strip()
+    candidates = [text]
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(text):
+        if character in "[{":
+            candidates.append(text[index:])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (ValueError, TypeError):
+            try:
+                parsed, _ = decoder.raw_decode(candidate)
+            except (ValueError, TypeError):
+                continue
+        try:
+            json.dumps(parsed, allow_nan=False)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, (dict, list)):
+            return parsed
+    return None
 
 
 def schema_from_file(path):
@@ -144,7 +160,9 @@ def load_thread(cfg, name):
 def snapshot_turn_images(cfg, name, turn_number, image_paths):
     # Browser workflows routinely reuse a fixed screenshot path such as files.path('shot.png').
     # Snapshotting each turn's normalized image into <thread>_media keeps earlier turns intact even
-    # when the caller overwrites or deletes the original file before a follow-up turn.
+    # when the caller overwrites or deletes the original file before a follow-up turn. The ".norm."
+    # marker makes images.upload_bytes send these bytes verbatim, so a five-turn thread does not
+    # JPEG-recompress the first turn five times.
     if not image_paths:
         return []
     media_dir = thread_media_dir(cfg, name)
@@ -153,7 +171,7 @@ def snapshot_turn_images(cfg, name, turn_number, image_paths):
     for index, src in enumerate(image_paths, 1):
         mime, data = images.upload_bytes(src)
         ext = "jpg" if mime == "image/jpeg" else "png"
-        dest = media_dir / f"turn{turn_number:03d}_{index:02d}.{ext}"
+        dest = media_dir / f"turn{turn_number:03d}_{index:02d}{images.NORMALIZED_MARK}{ext}"
         dest.write_bytes(data)
         saved.append(portable_path(dest, cfg))
     return saved

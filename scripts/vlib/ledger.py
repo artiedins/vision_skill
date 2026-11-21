@@ -119,8 +119,15 @@ def totals(cfg):
 
 
 def money(value):
+    # Readable in a one-line run header: sub-cent call costs keep six decimals, ordinary amounts
+    # four, and account totals two. Nine decimals made every printed line hard to scan.
     if value is None:
         return "unknown"
-    if 0 < abs(value) < 1e-9:
-        return f"${value:.3g}"
-    return f"${value:.9f}"
+    size = abs(value)
+    if 0 < size < 1e-6:
+        return f"${value:.2g}"
+    if size < 0.01:
+        return f"${value:.6f}"
+    if size < 1:
+        return f"${value:.4f}"
+    return f"${value:.2f}"

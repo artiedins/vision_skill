@@ -8,6 +8,8 @@ from pathlib import Path
 
 from PIL import Image, ImageCms, ImageEnhance, ImageOps
 
+from . import ledger
+
 RAW_SUFFIXES = (".arw", ".dng", ".cr2", ".nef", ".raf", ".rw2", ".orf", ".srw", ".pef")
 PILLOW_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".ppm")
 
@@ -130,10 +132,21 @@ def display_image(path):
         return image
 
 
+NORMALIZED_MARK = ".norm."
+
+
 def upload_bytes(path, max_bytes=0):
     suffix = Path(path).suffix.lower()
     if suffix not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
         raise ValueError("send JPEG/PNG/WebP or a still GIF; use prep for raw, TIFF or HEIC input")
+    if NORMALIZED_MARK in Path(path).name:
+        # Thread snapshots are written already normalized. Re-encoding them on every later turn
+        # would stack a generation of JPEG loss per turn and change the bytes the model sees,
+        # so these files are sent exactly as stored.
+        data = Path(path).read_bytes()
+        if max_bytes and len(data) > max_bytes:
+            raise ValueError(f"normalized image has {len(data)} bytes, limit {max_bytes}; use prep or crop before a paid call")
+        return "image/png" if suffix == ".png" else "image/jpeg", data
     with display_image(path) as image:
         buffer = io.BytesIO()
         # WebP can be a plot or a photograph. Preserve it losslessly until the caller
@@ -233,12 +246,28 @@ def render(image, variant, max_long_edge=0):
 def save(image, path, quality=90):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("xb") as handle:
-        image.save(handle, "JPEG", quality=int(quality), optimize=True)
+    if path.suffix.lower() == ".png":
+        with path.open("xb") as handle:
+            image.save(handle, "PNG")
+    else:
+        with path.open("xb") as handle:
+            image.save(handle, "JPEG", quality=int(quality), optimize=True)
     return {"path": str(path), "width": image.width, "height": image.height, "bytes": path.stat().st_size, "kilobytes": round(path.stat().st_size / 1024, 1)}
 
 
-def prepare(src, out_dir, variants, max_long_edge=0, quality=None, prefix="", manifest=None):
+def target_suffix(src, format):
+    if format not in ("auto", "png", "jpeg"):
+        raise ValueError("--format must be auto, png or jpeg")
+    if format == "png":
+        return ".png"
+    if format == "jpeg":
+        return ".jpg"
+    # Lossless output for images that arrived lossless (screenshots, plots, pixel art), JPEG for
+    # photographs and camera raw, where a PNG would only be bigger.
+    return ".png" if Path(src).suffix.lower() in (".png", ".webp", ".gif", ".bmp", ".ppm") else ".jpg"
+
+
+def prepare(src, out_dir, variants, max_long_edge=0, quality=None, prefix="", manifest=None, format="auto"):
     src = Path(src)
     out_dir = Path(out_dir)
     if max_long_edge < 0:
@@ -246,7 +275,8 @@ def prepare(src, out_dir, variants, max_long_edge=0, quality=None, prefix="", ma
     for text in [prefix] + [v.name for v in variants]:
         if "/" in text or "\\" in text:
             raise ValueError("prefix and variant name must not contain path separators")
-    targets = [out_dir / f"{prefix}{src.stem}_{v.name}.jpg" for v in variants]
+    suffix = target_suffix(src, format)
+    targets = [out_dir / f"{prefix}{src.stem}_{v.name}{suffix}" for v in variants]
     if len(set(targets)) != len(targets) or any(p.exists() or p.resolve() == src.resolve() for p in targets):
         raise ValueError("prep would overwrite a source or output; choose a new --out or --prefix")
     results = []
@@ -263,12 +293,12 @@ def prepare(src, out_dir, variants, max_long_edge=0, quality=None, prefix="", ma
                     "box_pixels": list(crop_box(variant.box, *image.size)),
                     "transform": asdict(variant),
                     "max_long_edge": max_long_edge,
+                    "format": suffix.lstrip("."),
                 }
             )
             results.append(saved)
     if manifest:
-        Path(manifest).parent.mkdir(parents=True, exist_ok=True)
-        Path(manifest).write_text(json.dumps({"source": str(src), "variants": results}, indent=2))
+        ledger.write_json(Path(manifest), {"variants": results})
     return results
 
 
@@ -304,7 +334,7 @@ def variant_list(preset, box=None, long_edge=0, scale=1.0, contrast=1.0, sharpen
 
 
 def probe_card(path):
-    # Synthetic card for the paid reachability probe: a legible number, a coloured square and a
+    # Synthetic card for the paid reachability probe: a legible number, a colored square and a
     # distinct shape. Drawn locally so the probe needs no user image and no personal data.
     path = Path(path)
     if path.is_file() and path.stat().st_size > 0:

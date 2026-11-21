@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,7 +18,8 @@ class Request:
     image_paths: list = field(default_factory=list)
     system: str = None
     effort: str = "high"
-    max_tokens: int = 4000
+    # 0 means "choose from effort": high and medium effort get 6000 tokens, everything else 2000.
+    max_tokens: int = 0
     schema: dict = None
     tag: str = ""
     json_mode: bool = False
@@ -45,12 +47,27 @@ def read_prompt(args):
     return args.prompt or ""
 
 
+HIGH_EFFORT_TOKENS = 6000
+QUICK_TOKENS = 2000
+
+
+def resolve_tokens(effort, max_tokens):
+    # Reasoning tokens are billed against max_tokens. A high-effort call given less than about 6000
+    # tokens can spend the whole allowance reasoning and return empty content with
+    # finish_reason=length, billed either way, so the default follows the effort instead of
+    # duplicating that trap in the CLI.
+    if max_tokens and max_tokens > 0:
+        return int(max_tokens)
+    return HIGH_EFFORT_TOKENS if effort in ("high", "medium") else QUICK_TOKENS
+
+
 def make_payload(request):
     slug = check_model(request.model)
     if not isinstance(request.prompt, str) or not request.prompt.strip():
         raise ValueError("provide a nonempty --prompt, --prompt-file or --prompt - for stdin")
-    if type(request.max_tokens) is not int or request.max_tokens <= 0:
-        raise ValueError("max_tokens must be a positive integer")
+    if type(request.max_tokens) is not int or request.max_tokens < 0:
+        raise ValueError("max_tokens must be zero (choose from effort) or a positive integer")
+    request.max_tokens = resolve_tokens(request.effort, request.max_tokens)
     if request.effort not in ("none", "minimal", "low", "medium", "high", "default"):
         raise ValueError("unknown reasoning effort")
     prompt = request.prompt
@@ -151,7 +168,7 @@ def do_call(cfg, request, quiet=False, resume=False):
         # Explicit request/auth rejections have no generation to retry. Ambiguous failures
         # (timeouts, 429s, 5xx) leave the pending marker behind as a record of what was in flight.
         if exc.status in (400, 401, 403, 404, 405, 413, 415, 422):
-            pending_path.unlink()
+            pending_path.unlink(missing_ok=True)
         raise
     if not isinstance(body, dict):
         raise ValueError("invalid API response; request remains pending")
@@ -161,14 +178,18 @@ def do_call(cfg, request, quiet=False, resume=False):
     meta["seconds"] = round(time.monotonic() - started, 2)
     structured = request.json_mode or request.schema is not None
     parsed = runs.extract_json(answer) if structured else None
-    meta["success"] = bool(answer.strip()) and not body.get("error") and (meta["finish_reason"] in ("stop", "end_turn")) and (not structured or parsed is not None)
+    # OpenRouter sometimes omits finish_reason (seen on Gemini 3.8 Flash). A nonempty answer is
+    # complete then; length, content_filter and explicit errors still fail.
+    finish = meta["finish_reason"]
+    complete = finish in ("stop", "end_turn") or (finish is None and bool(answer.strip()))
+    meta["success"] = bool(answer.strip()) and not body.get("error") and complete and (not structured or parsed is not None)
     runs.write_run(cfg, name, runs.request_record(payload), body, answer, meta)
     with ledger.locked(cfg):
         ledger.append(cfg, meta)
         if meta["cost"] is not None:
             pending_path.unlink()
         total = ledger.totals(cfg)
-    thread_tag = f' thread={request.thread}#{request.turn_number}' if request.thread else ""
+    thread_tag = f" thread={request.thread}#{request.turn_number}" if request.thread else ""
     print(
         f'vision: model={meta["model"]} endpoint={meta["endpoint"]} provider={meta.get("provider")}{thread_tag} '
         f'cost={ledger.money(meta["cost"])} '
@@ -195,7 +216,7 @@ def per_million(pricing, field):
 
 def cmd_models(cfg, args):
     catalog = client.catalog(cfg, refresh=args.refresh)
-    endpoints = client.endpoints(cfg, refresh=args.refresh)
+    endpoints, failures = client.endpoints(cfg, refresh=args.refresh)
     rows = []
     for model in config.ALLOWED:
         entry = catalog.get(model.slug) or {}
@@ -218,27 +239,36 @@ def cmd_models(cfg, args):
             }
         )
     if args.json:
-        print(json.dumps(rows, indent=2))
+        print(json.dumps({"models": rows, "lookup_failures": [{"slug": s, "error": e} for s, e in failures]}, indent=2))
         return
-    print(f'{"slug":35s} {"pinned endpoint":26s} {"health":>6s} {"in $/Mtok":>9s} {"out $/Mtok":>10s} img')
+    print(f'{"slug":34s} {"pinned endpoint":26s} {"health":>6s} {"in $/Mtok":>9s} {"out $/Mtok":>10s} img')
     for row in rows:
-        flag = "" if row["endpoint_listed"] else "  <- PIN NOT LISTED"
+        if any(slug == row["slug"] for slug, _ in failures):
+            flag = "  <- LOOKUP FAILED"
+        elif not row["endpoint_listed"]:
+            flag = "  <- PIN NOT LISTED"
+        else:
+            flag = ""
         print(
-            f'{row["slug"]:35s} {row["endpoint"]:26s} {str(row["endpoint_status"]):>6s} '
+            f'{row["slug"]:34s} {row["endpoint"]:26s} {str(row["endpoint_status"]):>6s} '
             f'{str(row["prompt_per_mtok"]):>9s} {str(row["completion_per_mtok"]):>10s} '
             f'{"yes" if row["image_input"] else "no"}{flag}'
         )
+    for slug, error in failures:
+        print(f"vision: WARNING endpoint lookup failed for {slug}: {error}", file=sys.stderr)
     missing = [row["slug"] for row in rows if not row["endpoint_listed"]]
     if missing:
         print("vision: WARNING pinned endpoint not in the live list for: " + ", ".join(missing), file=sys.stderr)
+    degraded = [f'{row["slug"]} ({row["endpoint_status"]})' for row in rows if row["endpoint_status"] not in (0, None)]
+    if degraded:
+        print("vision: WARNING nonzero provider health on: " + ", ".join(degraded) + "; expect slow or failing calls there", file=sys.stderr)
     print(
-        "vision: health 0 is normal; nonzero is a provider-side status flag, not a routing block. "
-        "Marketplace endpoint prices float live; billed spend comes from usage.cost.",
+        "vision: health 0 is normal; nonzero is a provider-side status flag, not a routing block. " "Prices float live; billed spend comes from usage.cost.",
         file=sys.stderr,
     )
 
 
-PROBE_PROMPT = "Image 1 is a test card. Reply on one line with the large number, the colour of the square " "on the left, and the shape on the right."
+PROBE_PROMPT = "Image 1 is a test card. Reply on one line with the large number, the color of the square " "on the left, and the shape on the right."
 
 
 def cmd_probe(cfg, args):
@@ -293,14 +323,16 @@ def cmd_info(cfg, args):
 def cmd_prep(cfg, args):
     variants = images.variant_list(args.preset, box=args.box, long_edge=args.long_edge, scale=args.scale, contrast=args.contrast, sharpen=args.sharpen, quality=args.quality, name=args.name)
     out_dir = Path(args.out) if args.out else (cfg.prepared_dir() / runs.run_name("prep", "img"))
+    manifest = None
+    if args.manifest:
+        manifest = Path(args.manifest)
+        if manifest.exists() or manifest.resolve() in [Path(p).resolve() for p in args.images]:
+            raise ValueError("manifest would overwrite an existing file")
     results = []
     for src in args.images:
-        results.extend(images.prepare(src, out_dir, variants, max_long_edge=args.max_long_edge, prefix=args.prefix))
-    if args.manifest:
-        path = Path(args.manifest)
-        if path.exists() or path.resolve() in [Path(p).resolve() for p in args.images]:
-            raise ValueError("manifest would overwrite an existing file")
-        ledger.write_json(path, {"variants": results})
+        results.extend(images.prepare(src, out_dir, variants, max_long_edge=args.max_long_edge, prefix=args.prefix, format=args.format))
+    if manifest:
+        ledger.write_json(manifest, {"variants": results})
     if args.json:
         print(json.dumps(results, indent=2))
     else:
@@ -389,10 +421,7 @@ def cmd_threads(cfg, args):
             return
         for row in rows:
             marker = " *" if row["is_last"] else ""
-            print(
-                f'{row["thread"] + marker:28s} turns={row["turns"]:<3d} model={str(row["model"]):32s} '
-                f'cost={ledger.money(row["cost_total"])} updated={row["updated"]}'
-            )
+            print(f'{row["thread"] + marker:28s} turns={row["turns"]:<3d} model={str(row["model"]):32s} ' f'cost={ledger.money(row["cost_total"])} updated={row["updated"]}')
         return
     if action == "show":
         name = args.name or runs.last_thread_name(cfg)
@@ -436,43 +465,67 @@ def result_row(cfg, result, tag):
     }
 
 
+def attempt(cfg, request, resume=False):
+    # One call, returned as a result row whatever happens: a failed call (rejected pin, truncated
+    # answer, empty content) carries an error field so the answers already paid for survive.
+    try:
+        return result_row(cfg, do_call(cfg, request, quiet=True, resume=resume), request.tag)
+    except (ValueError, client.ApiError) as exc:
+        print(f"vision: {request.tag} ({request.model}) failed: {exc}", file=sys.stderr)
+        return {"tag": request.tag, "model": request.model, "error": str(exc), "cost": None, "skipped": False}
+
+
+def write_panel(path, prompt, rows):
+    completed = sum(1 for row in rows if "error" not in row)
+    lines = [f"# Panel: {completed} of {len(rows)} completed", "", prompt]
+    for row in rows:
+        if "error" in row:
+            lines += ["", f'## {row["model"]}, FAILED', "", row["error"]]
+        else:
+            answer = row["answer"] if isinstance(row["answer"], str) else json.dumps(row["answer"], indent=2)
+            lines += ["", f'## {row["model"]}, {ledger.money(row["cost"])}', "", answer]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def budget_spent(rows):
+    # Only calls that actually ran count toward a --max-spend cap; resumed rows were paid earlier.
+    return sum((row.get("cost") or 0) for row in rows if "error" not in row and not row.get("skipped"))
+
+
 def cmd_panel(cfg, args):
     models = [check_model(m.strip()) for m in args.models.split(",") if m.strip()]
     if not models or len(models) != len(set(models)):
         raise ValueError("panel needs a nonempty list of distinct allowed models")
     prompt = read_prompt(args)
     path = Path(args.out_dir or cfg.runs_dir()) / (runs.run_name(args.tag or "panel", "panel") + ".md")
+    requests = [request_from_args(args, model, prompt) for model in models]
     rows = []
-    failed = 0
     try:
-        for model in models:
-            request = request_from_args(args, model, prompt)
-            try:
-                result = do_call(cfg, request, quiet=True)
-                rows.append(result_row(cfg, result, request.tag))
-            except (ValueError, client.ApiError) as exc:
-                # One model failing (allocation, pinned endpoint, truncated answer) must not cost
-                # the answers already paid for. Its transcript and ledger record are on disk.
-                failed += 1
-                rows.append({"tag": request.tag, "model": model, "error": str(exc)})
-                print(f"vision: panel {model} failed: {exc}", file=sys.stderr)
-            lines = [f"# Panel: {len(rows) - failed} of {len(models)} completed", "", prompt]
-            for row in rows:
-                if "error" in row:
-                    lines += ["", f'## {row["model"]}, FAILED', "", row["error"]]
-                else:
-                    lines += ["", f'## {row["model"]}, {ledger.money(row["cost"])}', "", json.dumps(row["answer"], indent=2) if not isinstance(row["answer"], str) else row["answer"]]
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        # Models are independent, so a panel runs concurrently: three opinions cost one call's
+        # latency instead of three. Ledger writes stay safe because each call locks only its own
+        # short registry update, never the network request.
+        for start in range(0, len(requests), args.workers):
+            chunk = requests[start : start + args.workers]
+            spent = budget_spent(rows)
+            if args.max_spend is not None and spent >= args.max_spend:
+                rows.extend({"tag": request.tag, "model": request.model, "cost": None, "skipped": False, "error": f"not attempted: --max-spend {args.max_spend:g} reached"} for request in chunk)
+                continue
+            with ThreadPoolExecutor(max_workers=args.workers) as pool:
+                # pool.map hands the request in as the only argument, so bind cfg here.
+                rows.extend(pool.map(lambda request: attempt(cfg, request), chunk))
+            write_panel(path, prompt, rows)
     finally:
-        print(f"vision: panel {len(rows) - failed}/{len(models)} completed; {path}", file=sys.stderr)
+        write_panel(path, prompt, rows)
+        failed = sum(1 for row in rows if "error" in row)
+        print(f"vision: panel {len(rows) - failed}/{len(requests)} completed, {ledger.money(budget_spent(rows))} new spend; {path}", file=sys.stderr)
         if args.json:
             print(json.dumps(rows, indent=2, ensure_ascii=False))
         elif not args.quiet:
             for row in rows:
                 print(f'\n{row["model"]}:\n{row.get("error") or row["answer"]}')
     if failed:
-        raise ValueError(f"{failed} of {len(models)} panel calls failed; see {path}")
+        raise ValueError(f"{failed} of {len(requests)} panel calls failed; see {path}")
 
 
 def batch_requests(args):
@@ -514,37 +567,49 @@ def batch_requests(args):
     return requests[: args.limit] if args.limit is not None else requests
 
 
+def batch_summary(rows, total):
+    done = [row for row in rows if "error" not in row]
+    fresh = [row for row in done if not row.get("skipped")]
+    cost = sum((row.get("cost") or 0) for row in fresh)
+    return {
+        "completed": len(done),
+        "failed": len(rows) - len(done),
+        "resumed": len(done) - len(fresh),
+        "new_calls": len(fresh),
+        "new_cost": cost,
+        "total": total,
+    }
+
+
 def cmd_batch(cfg, args):
     requests = batch_requests(args)
     rows = []
-    failed = 0
     try:
         for request in requests:
-            try:
-                result = do_call(cfg, request, quiet=True, resume=not args.redo)
-                rows.append(result_row(cfg, result, request.tag))
-            except (ValueError, client.ApiError) as exc:
-                # An unusable or rejected answer is saved and charged; the rest of the batch runs.
-                failed += 1
-                rows.append({"tag": request.tag, "model": request.model, "error": str(exc)})
-                print(f"vision: batch item {request.tag} failed: {exc}", file=sys.stderr)
+            if args.max_spend is not None and budget_spent(rows) >= args.max_spend:
+                rows.append({"tag": request.tag, "model": request.model, "cost": None, "skipped": False, "error": f"not attempted: --max-spend {args.max_spend:g} reached"})
+            else:
+                rows.append(attempt(cfg, request, resume=not args.redo))
             if args.out:
                 ledger.write_json(Path(args.out), rows)
     finally:
         after = ledger.totals(cfg)
-        # counted from this batch's own rows, because other calls may share the state directory
-        mine = [row for row in rows if "error" not in row]
-        cost = sum(row["cost"] or 0 for row in mine)
-        print(f"vision: batch {len(mine)}/{len(requests)} completed, {len(mine)} newly recorded calls; " f"reported new cost {ledger.money(cost)}", file=sys.stderr)
-        if after["pending"] or after["unknown_costs"]:
-            print("vision: WARNING batch cost is incomplete; unresolved request/cost remains", file=sys.stderr)
+        summary = batch_summary(rows, len(requests))
         if args.json:
             print(json.dumps(rows, indent=2, ensure_ascii=False))
         elif not args.quiet:
             for row in rows:
                 print(f'{row["tag"]}: {row.get("error") or row["answer"]}')
-    if failed:
-        raise ValueError(f"{failed} of {len(requests)} batch items failed; results on disk may be partial")
+        print(
+            f'vision: batch {summary["completed"]}/{summary["total"]} completed, '
+            f'{summary["new_calls"]} newly recorded calls ({summary["resumed"]} resumed from cache); '
+            f'reported new cost {ledger.money(summary["new_cost"])}',
+            file=sys.stderr,
+        )
+        if after["pending"] or after["unknown_costs"]:
+            print("vision: WARNING batch cost is incomplete; unresolved request/cost remains", file=sys.stderr)
+    if summary["failed"]:
+        raise ValueError(f'{summary["failed"]} of {summary["total"]} batch items failed; results on disk may be partial')
 
 
 def cmd_start(cfg, args):
@@ -650,6 +715,7 @@ def build_parser():
     p.add_argument("--name")
     p.add_argument("--prefix", default="")
     p.add_argument("--max-long-edge", type=int, default=0)
+    p.add_argument("--format", default="auto", choices=["auto", "png", "jpeg"], help="output format; auto writes PNG for PNG/WebP/GIF sources and JPEG otherwise")
     p.add_argument("--manifest")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_prep)
@@ -665,7 +731,7 @@ def build_parser():
     p.add_argument("--image", action="append", default=[])
     p.add_argument("--system")
     p.add_argument("--effort", default=None, choices=["none", "minimal", "low", "medium", "high", "default"])
-    p.add_argument("--max-tokens", type=int, default=4000)
+    p.add_argument("--max-tokens", type=int, default=0, help="output token cap; 0 picks 6000 at high/medium effort and 2000 otherwise")
     p.add_argument("--json", action="store_true")
     p.add_argument("--schema")
     p.add_argument("--tag")
@@ -680,7 +746,9 @@ def build_parser():
     p.add_argument("--image", action="append", default=[])
     p.add_argument("--system")
     p.add_argument("--effort", default="high", choices=["none", "minimal", "low", "medium", "high", "default"])
-    p.add_argument("--max-tokens", type=int, default=4000)
+    p.add_argument("--max-tokens", type=int, default=0, help="output token cap; 0 picks 6000 at high/medium effort and 2000 otherwise")
+    p.add_argument("--workers", type=int, default=3, help="models asked concurrently, default 3")
+    p.add_argument("--max-spend", type=float, help="stop starting new calls once this many dollars were spent in this panel")
     p.add_argument("--json", action="store_true")
     p.add_argument("--schema")
     p.add_argument("--tag")
@@ -700,7 +768,8 @@ def build_parser():
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--json", action="store_true")
     p.add_argument("--effort", default="high")
-    p.add_argument("--max-tokens", type=int, default=4000)
+    p.add_argument("--max-tokens", type=int, default=0, help="output token cap; 0 picks 6000 at high/medium effort and 2000 otherwise")
+    p.add_argument("--max-spend", type=float, help="stop starting new calls once this many dollars were spent in this batch")
     p.set_defaults(func=cmd_batch)
     p = sub.add_parser("probe", help="paid reachability check: one tiny call per pinned endpoint")
     p.add_argument("--models", help="comma-separated short names or slugs; default all allowed models")

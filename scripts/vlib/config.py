@@ -23,30 +23,26 @@ class Model:
 # tag with allow_fallbacks false, so a call either reaches this endpoint or fails loudly.
 # A tag without a region segment also matches that provider's regional siblings (for example
 # amazon-bedrock includes amazon-bedrock/us-east-1). Pass the region form to narrow it further.
+# Chosen from the 99-item SightBench v2 results in the owning project's
+# COMBINED_RESULTS.CSV: every model here scored above rank 8, and the token cost
+# per call is small enough for routine use. Google models run on flex
+# service tiers; for Gemini 4 the only flex pin OpenRouter lists is
+# google-ai-studio/flex (no google-vertex/*/flex exists for those three).
 ALLOWED = [
-    Model("openai/gpt-6-luna", "GPT-6 Luna", "openai/flex", "cheap", "Ultra-cheap OpenAI vision pass; check coordinates and small-text fidelity before relying on it."),
-    Model("z-ai/glm-5.3-flash", "GLM 5.3 Flash", "gmicloud/fp8", "cheap", "Low-cost open-weight vision pass; budget extra tokens if reasoning is verbose."),
-    Model("deepseek/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash", "morph/fp8", "cheap", "Cheap bulk description, pre-filtering, rough captioning."),
-    Model("google/gemini-3.8-flash", "Gemini 3.8 Flash", "google-vertex/global/flex", "cheap", "Plots, tables, bulk inventory; cheap reliable matplotlib layout check at low effort."),
-    Model("xiaomi/mimo-v2.6-pro", "MiMo V2.6 Pro", "gmicloud/bf16", "mid", "Captioning and general description; boxes were inaccurate on the card test."),
-    Model("openai/gpt-6.1-terra", "GPT-6.1 Terra", "openai/flex", "mid", "Default general work: fast screenshot, UI, document, and exact-coordinate reading.", default_look=True),
-    Model("moonshotai/kimi-k3.1-pro", "Kimi K3.1 Pro", "morph/fp8", "mid", "Strongest open-weight multimodal reader for cross-family comparison."),
-    Model("openai/gpt-6.1-sol", "GPT-6.1 Sol", "openai/flex", "mid", "Dense landmark/object inventory, exact fractional boxes, and chart analytics; reasoning is mandatory."),
-    Model("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro", "google-vertex/global/flex", "mid", "Constrained comparison between named candidates; check its confidence numbers."),
-    Model("google/gemini-4-hydrogen", "Gemini 4 Hydrogen", "google-vertex/global", "mid", "Fast Gemini 4 multimodal/agentic reader; strong on charts and structured visual reasoning."),
-    Model("x-ai/grok-4.7", "Grok 4.7", "xai/zdr", "mid", "General description and blunt second opinion; refuses ungrounded headings."),
-    Model("anthropic/claude-sonnet-5.5", "Claude Sonnet 5.5", "amazon-bedrock", "mid", "Desktop/web UI reading, dense screenshots, and grounded visual reasoning."),
-    Model("google/gemini-4-argon", "Gemini 4 Argon", "google-vertex/global", "premium", "Strong all-round Gemini 4 reading; compare with Gemini 4 Carbon at the same price."),
-    Model("google/gemini-4-carbon", "Gemini 4 Carbon", "google-vertex/global", "premium", "Highest-intelligence Gemini 4 model for hard visual, scientific, and document reasoning."),
-    Model("anthropic/claude-opus-5.5", "Claude Opus 5.5", "amazon-bedrock", "premium", "Geometry, shadow and camera reasoning, awkward judgement calls."),
-    Model("anthropic/claude-fable-5.2", "Claude Fable 5.2", "google-vertex/global", "premium", "Top-tier multimodal accuracy for decisive tie-breakers; dearest per call."),
+    Model("openai/gpt-6.1-terra", "GPT-6.1 Terra", "openai/flex", "cheap", "Default general work at low effort: fast screenshot, UI, document, and exact-coordinate reading.", default_look=True),
+    Model("google/gemini-3.8-flash", "Gemini 3.8 Flash", "google-vertex/global/flex", "cheap", "Bulk passes over plots, tables and inventory; the cheap reliable figure check at low effort."),
+    Model("google/gemini-4-hydrogen", "Gemini 4 Hydrogen", "google-ai-studio/flex", "mid", "Fast Gemini 4 reading of charts and structured scenes; the lowest-latency Gemini 4."),
+    Model(
+        "google/gemini-3.1-pro-preview", "Gemini 3.1 Pro", "google-vertex/global/flex", "mid", "Constrained comparison between named candidates; flex latency has reached 190 s, so raise --timeout."
+    ),
+    Model("google/gemini-4-argon", "Gemini 4 Argon", "google-ai-studio/flex", "premium", "Strong all-round Gemini 4 reading and the best-scoring Google model on SightBench v2."),
+    Model("google/gemini-4-neon", "Gemini 4 Neon", "google-ai-studio/flex", "premium", "Second Gemini 4 opinion; scored level with Argon on SightBench v2 at higher cost."),
 ]
 BY_SLUG = {m.slug: m for m in ALLOWED}
 SHORT = {m.slug.split("/")[1]: m.slug for m in ALLOWED}
 
-# ### HUMAN_REVIEW
-# Set (model, endpoint) image_bytes and request_bytes only after verifying provider limits.
-# Empty policies preserve the standalone default; no universal 3.6MiB cap is assumed.
+# Per-(model, endpoint) upload caps, keyed by (slug, endpoint tag). Empty by default: no universal
+# request-size limit is assumed, and images.upload_bytes only enforces a cap that is listed here.
 UPLOAD_LIMITS = {}
 
 
